@@ -1,0 +1,13 @@
+{
+	"name": "figma-to-code",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"setup:browser": "playwright install chromium"
+	},
+	"devDependencies": {
+		"pixelmatch": "^7.2.0",
+		"playwright": "^1.63.0",
+		"pngjs": "^7.0.0"
+	}
+}

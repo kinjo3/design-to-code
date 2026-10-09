@@ -1,0 +1,4 @@
+node_modules/
+.figma-diff/
+.DS_Store
+.claude/scheduled_tasks.lock
