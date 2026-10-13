@@ -2,7 +2,7 @@
 
 デザインデータを元にコードを実装し、デザインとの見た目の差分が閾値に収まるまで、最大 3 回 Claude Code に調整させる仕組み。比較した画素のうち差分のある画素の割合 `diffRatio` が `--threshold`（既定 0.02）以下になれば合格とする。
 
-Figma の URL から実装するスキル `figma-to-code` と、Figma の書き出し画像と実装の描画結果を比べるスクリプト `scripts/figma-diff.mjs` からなる。実装の規約・トークン・ビルドのコマンドは対象プロジェクトの規約（エージェントに読み込まれている指示、README、既存コード）と `package.json` から読むため、設定ファイルは持たない。
+Figma の URL またはデザイン画像から実装するスキル `figma-to-code` と、Figma の書き出し画像またはデザイン画像と実装の描画結果を比べるスクリプト `scripts/figma-diff.mjs` からなる。実装の規約・トークン・ビルドのコマンドは対象プロジェクトの規約（エージェントに読み込まれている指示、README、既存コード）と `package.json` から読むため、設定ファイルは持たない。
 
 ## プロジェクトへの導入
 
@@ -32,7 +32,7 @@ Figma の URL から実装するスキル `figma-to-code` と、Figma の書き�
    }
    ```
 
-5. Figma の MCP（`get_design_context` `get_screenshot` `get_variable_defs` `get_metadata` `download_assets`）を Claude Code に許可する。
+5. Figma の URL から実装する場合は、Figma の MCP（`get_design_context` `get_screenshot` `get_variable_defs` `get_metadata` `download_assets`）を Claude Code に許可する。デザイン画像だけを使う場合は不要。
 
 ## 使い方
 
@@ -42,7 +42,13 @@ Figma の URL から実装するスキル `figma-to-code` と、Figma の書き�
 /figma-to-code https://www.figma.com/design/<file>?node-id=1-2 を実装して
 ```
 
-実装後、`scripts/figma-diff.mjs` が Figma のスクリーンショットと実装の描画結果を比べる。
+Figma の MCP を使えないプロジェクトでは、Figma の URL の代わりにデザイン画像のパスを渡す。画像ごとに、キャプチャしたときの表示幅（CSS px）を添える。画像がビューポートの全幅を写していない場合は、どのビューポート幅での表示かも添える。同じセクションのブレークポイント別の画像は 1 回の依頼にまとめて渡せる。デザイン内の写真・アイコンは、素材を渡さなければプレースホルダーで実装される。
+
+```text
+/figma-to-code design/hero-pc.png（表示幅 1440）と design/hero-sp.png（表示幅 375）を実装して
+```
+
+実装後、`scripts/figma-diff.mjs` が Figma のスクリーンショット（デザイン画像を渡した場合はその画像）と実装の描画結果を比べる。
 
 ```sh
 node scripts/figma-diff.mjs --url <描画先の URL> --selector "<対象セレクタ>" --figma <Figma のスクショ> --width <設計幅>
