@@ -162,7 +162,7 @@ try {
 const actualPng = PNG.sync.read(actualBuffer);
 
 const positionWarning = [targetPosition.x, targetPosition.y].some(isFractionalPosition)
-	? `対象の位置が小数です（x=${targetPosition.x.toFixed(2)} y=${targetPosition.y.toFixed(2)}）。撮影範囲が外側へ丸められて actualSize が実寸より大きくなり、diffRatio が膨らむことがあります。比較用ページでは対象を整数の位置に置いてください（縦中央寄せなどをやめる）`
+	? `対象の位置が小数です（x=${targetPosition.x.toFixed(2)} y=${targetPosition.y.toFixed(2)}）。撮影範囲が外側へ丸められて actualSize が実寸より大きくなり、diffRatio が膨らむことがあります。撮影している実装側のページで、対象を整数の位置に置いてください（Figma は変更しない。縦中央寄せなど比較専用のレイアウトが原因のときだけ直す）`
 	: undefined;
 
 const canvasWidth = Math.max(figmaPng.width, actualPng.width);
