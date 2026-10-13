@@ -88,6 +88,14 @@ function errorText(error) {
 		.join("\n");
 }
 
+// locator.screenshot() は対象の位置が小数だと撮影範囲を外側へ丸めて切り出す。
+// 丸めはデバイスピクセル単位で起きるので、デバイスピクセルに換算して整数かどうかを見る
+const FRACTIONAL_POSITION_EPSILON = 0.01;
+function isFractionalPosition(cssPx) {
+	const devicePx = cssPx * deviceScaleFactor;
+	return Math.abs(devicePx - Math.round(devicePx)) > FRACTIONAL_POSITION_EPSILON;
+}
+
 async function captureActual() {
 	let browser;
 	try {
@@ -131,21 +139,31 @@ async function captureActual() {
 		// locator.screenshot() も撮影の直前にスクロールするが、そこから描画までの猶予が無い
 		await locator.scrollIntoViewIfNeeded();
 		await page.waitForTimeout(wait);
-		return await locator.screenshot();
+		// boundingBox() はビューポート基準でスクロール量に左右されるので、撮影範囲と同じページ基準で測る
+		const position = await locator.evaluate((el) => {
+			const rect = el.getBoundingClientRect();
+			return { x: rect.left + window.scrollX, y: rect.top + window.scrollY };
+		});
+		return { buffer: await locator.screenshot(), position };
 	} finally {
 		await browser.close();
 	}
 }
 
 let actualBuffer;
+let targetPosition;
 try {
-	actualBuffer = await captureActual();
+	({ buffer: actualBuffer, position: targetPosition } = await captureActual());
 } catch (error) {
 	if (error instanceof CaptureError) fail(error.message);
 	throw error;
 }
 
 const actualPng = PNG.sync.read(actualBuffer);
+
+const positionWarning = [targetPosition.x, targetPosition.y].some(isFractionalPosition)
+	? `対象の位置が小数です（x=${targetPosition.x.toFixed(2)} y=${targetPosition.y.toFixed(2)}）。撮影範囲が外側へ丸められて actualSize が実寸より大きくなり、diffRatio が膨らむことがあります。比較用ページでは対象を整数の位置に置いてください（縦中央寄せなどをやめる）`
+	: undefined;
 
 const canvasWidth = Math.max(figmaPng.width, actualPng.width);
 const canvasHeight = Math.max(figmaPng.height, actualPng.height);
@@ -310,6 +328,8 @@ const summary = {
 	diffClustersCssPx: clusterReports,
 	figmaSize: { width: figmaPng.width, height: figmaPng.height },
 	actualSize: { width: actualPng.width, height: actualPng.height },
+	targetPositionCssPx: targetPosition,
+	positionWarning,
 	deviceScaleFactor,
 	diffRatioThreshold,
 	args: { url, selector, figmaPath, width, figmaWidth, height, wait },
@@ -320,6 +340,7 @@ writeFileSync(join(outDir, "summary.json"), JSON.stringify(summary, null, 2));
 console.log(
 	`${pass ? "PASS" : "FAIL"} diffRatio=${(diffRatio * 100).toFixed(2)}% (threshold=${(diffRatioThreshold * 100).toFixed(2)}%)`,
 );
+if (positionWarning) console.log(`警告: ${positionWarning}`);
 if (!pass) {
 	if (clusterReports.length > 0) {
 		console.log("差分クラスタ（CSS px 概算、差分量の大きい順）:");
