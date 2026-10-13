@@ -92,6 +92,8 @@ function errorText(error) {
 // Chromium が実際に描画する範囲（各辺を CSS px の整数へ最も近く丸める）がずれ、画像の縁に何も描かれていない余白が付く。
 // その分だけ寸法と開始位置が Figma とずれて diffRatio が膨らむので、描画された範囲だけを切り出す
 function cropToPaintedBox(png, rect) {
+	// 描画範囲の規則は dsf が 1 と 2 のときだけ実測で確かめた。1.5 では対象の端が削れたので、整数でなければ切り出さない
+	if (Math.abs(deviceScaleFactor - Math.round(deviceScaleFactor)) > 1e-6) return png;
 	const toDevicePx = (cssPx) => Math.round(cssPx * deviceScaleFactor);
 	const paintedLeft = Math.round(rect.left);
 	const paintedTop = Math.round(rect.top);
