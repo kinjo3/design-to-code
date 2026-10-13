@@ -88,6 +88,26 @@ function errorText(error) {
 		.join("\n");
 }
 
+// 対象の位置や寸法が小数だと、locator.screenshot() の撮影範囲（各辺を CSS px の整数へ外側に丸める）と、
+// Chromium が実際に描画する範囲（各辺を CSS px の整数へ最も近く丸める）がずれ、画像の縁に何も描かれていない余白が付く。
+// その分だけ寸法と開始位置が Figma とずれて diffRatio が膨らむので、描画された範囲だけを切り出す
+function cropToPaintedBox(png, rect) {
+	// 描画範囲の規則は dsf が 1 と 2 のときだけ実測で確かめた。1.5 では対象の端が削れたので、整数でなければ切り出さない
+	if (Math.abs(deviceScaleFactor - Math.round(deviceScaleFactor)) > 1e-6) return png;
+	const toDevicePx = (cssPx) => Math.round(cssPx * deviceScaleFactor);
+	const paintedLeft = Math.round(rect.left);
+	const paintedTop = Math.round(rect.top);
+	const x = toDevicePx(paintedLeft - Math.floor(rect.left));
+	const y = toDevicePx(paintedTop - Math.floor(rect.top));
+	const cropWidth = toDevicePx(Math.round(rect.right) - paintedLeft);
+	const cropHeight = toDevicePx(Math.round(rect.bottom) - paintedTop);
+	// 変形などで対象の箱と撮影範囲が対応しない場合は、切り出さずに撮影結果をそのまま使う
+	if (cropWidth <= 0 || cropHeight <= 0 || x + cropWidth > png.width || y + cropHeight > png.height) return png;
+	const cropped = new PNG({ width: cropWidth, height: cropHeight });
+	PNG.bitblt(png, cropped, x, y, cropWidth, cropHeight, 0, 0);
+	return cropped;
+}
+
 async function captureActual() {
 	let browser;
 	try {
@@ -131,21 +151,33 @@ async function captureActual() {
 		// locator.screenshot() も撮影の直前にスクロールするが、そこから描画までの猶予が無い
 		await locator.scrollIntoViewIfNeeded();
 		await page.waitForTimeout(wait);
-		return await locator.screenshot();
+		// boundingBox() はビューポート基準でスクロール量に左右されるので、撮影範囲と同じページ基準で測る
+		const rect = await locator.evaluate((el) => {
+			const r = el.getBoundingClientRect();
+			return {
+				left: r.left + window.scrollX,
+				top: r.top + window.scrollY,
+				right: r.right + window.scrollX,
+				bottom: r.bottom + window.scrollY,
+			};
+		});
+		return { buffer: await locator.screenshot(), rect };
 	} finally {
 		await browser.close();
 	}
 }
 
 let actualBuffer;
+let targetRect;
 try {
-	actualBuffer = await captureActual();
+	({ buffer: actualBuffer, rect: targetRect } = await captureActual());
 } catch (error) {
 	if (error instanceof CaptureError) fail(error.message);
 	throw error;
 }
 
-const actualPng = PNG.sync.read(actualBuffer);
+const screenshotPng = PNG.sync.read(actualBuffer);
+const actualPng = cropToPaintedBox(screenshotPng, targetRect);
 
 const canvasWidth = Math.max(figmaPng.width, actualPng.width);
 const canvasHeight = Math.max(figmaPng.height, actualPng.height);
@@ -310,6 +342,8 @@ const summary = {
 	diffClustersCssPx: clusterReports,
 	figmaSize: { width: figmaPng.width, height: figmaPng.height },
 	actualSize: { width: actualPng.width, height: actualPng.height },
+	screenshotSize: { width: screenshotPng.width, height: screenshotPng.height },
+	targetRectCssPx: targetRect,
 	deviceScaleFactor,
 	diffRatioThreshold,
 	args: { url, selector, figmaPath, width, figmaWidth, height, wait },
