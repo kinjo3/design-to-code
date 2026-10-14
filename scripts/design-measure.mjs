@@ -3,9 +3,9 @@ import { readFileSync } from "node:fs";
 import { PNG } from "pngjs";
 
 const USAGE = `使い方:
-  node scripts/design-measure.mjs --image <PNG> --figma-width <表示幅> color <x>,<y> [<x>,<y> ...]
-  node scripts/design-measure.mjs --image <PNG> --figma-width <表示幅> edges row <y> | col <x>
-  node scripts/design-measure.mjs --image <PNG> --figma-width <表示幅> box <x>,<y>,<幅>,<高さ>
+  node scripts/design-measure.mjs --image <PNG> --design-width <表示幅> color <x>,<y> [<x>,<y> ...]
+  node scripts/design-measure.mjs --image <PNG> --design-width <表示幅> edges row <y> | col <x>
+  node scripts/design-measure.mjs --image <PNG> --design-width <表示幅> box <x>,<y>,<幅>,<高さ>
 座標と寸法はすべて CSS px（画像の左上が 0,0、小数も可）
 box は、指定した範囲の左上の画素を背景の色とみなす。範囲は中身より一回り大きく取る
 --tolerance <数値>（既定 12）: 同じ色とみなす RGBA の差の合計。薄い罫線が edges で区切られないときは下げる`;
@@ -22,7 +22,7 @@ try {
 		allowPositionals: true,
 		options: {
 			image: { type: "string" },
-			"figma-width": { type: "string" },
+			"design-width": { type: "string" },
 			tolerance: { type: "string", default: "12" },
 		},
 	}));
@@ -30,10 +30,10 @@ try {
 	fail(`${error instanceof Error ? error.message : String(error)}\n${USAGE}`);
 }
 
-if (!values.image || !values["figma-width"] || positionals.length === 0) fail(USAGE);
-const figmaWidth = Number(values["figma-width"]);
+if (!values.image || !values["design-width"] || positionals.length === 0) fail(USAGE);
+const designWidth = Number(values["design-width"]);
 const tolerance = Number(values.tolerance);
-if (!Number.isFinite(figmaWidth) || figmaWidth < 1) fail(`--figma-width には 1 以上の数値を指定してください（渡された値: "${values["figma-width"]}"）`);
+if (!Number.isFinite(designWidth) || designWidth < 1) fail(`--design-width には 1 以上の数値を指定してください（渡された値: "${values["design-width"]}"）`);
 if (!Number.isFinite(tolerance) || tolerance < 0) fail(`--tolerance には 0 以上の数値を指定してください（渡された値: "${values.tolerance}"）`);
 
 let png;
@@ -61,10 +61,10 @@ function iccProfileName(buffer) {
 const profileName = iccProfileName(file);
 const profileWarning = profileName === null ? "" : `\n注意: カラープロファイル「${profileName}」が埋め込まれています。sRGB でなければ、測った色は表示される色とずれます`;
 
-const scale = png.width / figmaWidth;
+const scale = png.width / designWidth;
 const scaleWarning =
 	Math.abs(scale - Math.round(scale)) > 1e-6 || scale < 1
-		? `\n警告: 倍率（画像の px 幅 ${png.width} ÷ 表示幅 ${figmaWidth}）が 1 以上の整数ではありません。表示幅が正しいか確認してください`
+		? `\n警告: 倍率（画像の px 幅 ${png.width} ÷ 表示幅 ${designWidth}）が 1 以上の整数ではありません。表示幅が正しいか確認してください`
 		: "";
 
 // 浮動小数の誤差で 3 が 2.9999… になると 1 画素手前を読むので、切り捨ての前にわずかに足す
