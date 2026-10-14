@@ -11,6 +11,7 @@ Figma の URL またはデザイン画像から実装するスキル `figma-to-c
    | コピー元 | コピー先 |
    | --- | --- |
    | `scripts/figma-diff.mjs` | `scripts/figma-diff.mjs` |
+   | `scripts/design-measure.mjs` | `scripts/design-measure.mjs`（デザイン画像を使う場合） |
    | `.claude/skills/figma-to-code/` | `.claude/skills/figma-to-code/` |
 
 2. 依存を入れ、Chromium を用意する。
@@ -42,7 +43,7 @@ Figma の URL またはデザイン画像から実装するスキル `figma-to-c
 /figma-to-code https://www.figma.com/design/<file>?node-id=1-2 を実装して
 ```
 
-Figma の MCP を使えないプロジェクトでは、Figma の URL の代わりにデザイン画像（PNG）のパスを渡す。画像ごとに、画像に写っている範囲をキャプチャしたときの表示幅（CSS px）を添える。画像がビューポートの全幅を写していない場合は、どのビューポート幅での表示かも添える。同じセクションのブレークポイント別の画像は 1 回の依頼にまとめて渡せる。デザイン内の写真・アイコンは、素材を渡さなければプレースホルダーで実装される。
+Figma の MCP を使えないプロジェクトでは、Figma の URL の代わりにデザイン画像（PNG）のパスを渡す。画像ごとに、画像に写っている範囲をキャプチャしたときの表示幅（CSS px）を添える。画像がビューポートの全幅を写していない場合は、どのビューポート幅での表示かも添える。同じセクションのブレークポイント別の画像は 1 回の依頼にまとめて渡せる。デザイン内の写真・アイコンは、素材を渡さなければプレースホルダーで実装される。色と寸法は、`scripts/design-measure.mjs` で画像の画素から測る。
 
 ```text
 /figma-to-code design/hero-pc.png（表示幅 1440）と design/hero-sp.png（表示幅 375）を実装して
