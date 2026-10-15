@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { chromium } from "playwright";
 import pixelmatch from "pixelmatch";
 import { PNG } from "pngjs";
+import { collectDomBoxes, compareLayout, formatLayoutReport, parseMetadata } from "./design-layout.mjs";
 
 const { values } = parseArgs({
 	options: {
@@ -17,6 +18,9 @@ const { values } = parseArgs({
 		out: { type: "string" },
 		wait: { type: "string", default: "300" },
 		hide: { type: "string" },
+		metadata: { type: "string", multiple: true },
+		texts: { type: "string" },
+		"layout-tolerance": { type: "string", default: "1" },
 	},
 });
 
@@ -37,6 +41,7 @@ for (const [name, min] of [
 	["height", 1],
 	["threshold", 0],
 	["wait", 0],
+	["layout-tolerance", 0],
 ]) {
 	if (values[name] === undefined) continue;
 	const value = Number(values[name]);
@@ -56,6 +61,26 @@ const diffRatioThreshold = Number(values.threshold);
 const wait = Number(values.wait);
 // 見本画像に無い固定ヘッダーのように、撮影時だけ伏せたい要素を呼び出し側が指定する
 const hideSelector = values.hide;
+const layoutTolerance = Number(values["layout-tolerance"]);
+
+// Figma の get_metadata の出力を渡されたときだけ、画素差分に加えて要素ごとの箱も比べる
+let figmaNodes = null;
+let metadataWarnings = [];
+if (values.metadata) {
+	try {
+		({ nodes: figmaNodes, warnings: metadataWarnings } = parseMetadata(values.metadata.map((file) => readFileSync(file, "utf8"))));
+	} catch (error) {
+		fail(`--metadata の XML を読めませんでした\n${error instanceof Error ? error.message : String(error)}`);
+	}
+}
+let nodeTexts = {};
+if (values.texts) {
+	try {
+		nodeTexts = JSON.parse(readFileSync(values.texts, "utf8"));
+	} catch (error) {
+		fail(`--texts の JSON を読めませんでした: ${values.texts}\n${error instanceof Error ? error.message : String(error)}`);
+	}
+}
 
 // 同じセレクタ・同じビューポートで書き出し幅だけ変えた実行が上書きし合わないよう、指定時は幅を重ねる
 const designWidthLabel = values["design-width"] === undefined ? "" : `-${designWidth}`;
@@ -161,7 +186,8 @@ async function captureActual() {
 				bottom: r.bottom + window.scrollY,
 			};
 		});
-		return { buffer: await locator.screenshot(), rect };
+		const domBoxes = figmaNodes ? await locator.evaluate(collectDomBoxes) : null;
+		return { buffer: await locator.screenshot(), rect, domBoxes };
 	} finally {
 		await browser.close();
 	}
@@ -169,8 +195,9 @@ async function captureActual() {
 
 let actualBuffer;
 let targetRect;
+let domBoxes;
 try {
-	({ buffer: actualBuffer, rect: targetRect } = await captureActual());
+	({ buffer: actualBuffer, rect: targetRect, domBoxes } = await captureActual());
 } catch (error) {
 	if (error instanceof CaptureError) fail(error.message);
 	throw error;
@@ -216,7 +243,13 @@ const diffPixels = pixelmatch(designCanvas.data, actualCanvas.data, diffPng.data
 
 const totalPixels = canvasWidth * canvasHeight;
 const diffRatio = diffPixels / totalPixels;
-const pass = diffRatio <= diffRatioThreshold;
+const pixelPass = diffRatio <= diffRatioThreshold;
+
+// ---- 要素ごとの箱の比較 ----
+
+const layoutResults = figmaNodes ? compareLayout(figmaNodes, domBoxes, nodeTexts, layoutTolerance) : null;
+const layoutPass = layoutResults === null || layoutResults.every((result) => result.status === "OK");
+const pass = pixelPass && layoutPass;
 
 // ---- 差分クラスタ ----
 // AI が画像を読まずに修正箇所のあたりを付けるための概算レポート。座標はセル（16px）精度で十分とする。
@@ -336,6 +369,13 @@ writeFileSync(join(outDir, "compare.png"), PNG.sync.write(comparePng));
 
 const summary = {
 	pass,
+	pixelPass,
+	layout: layoutResults && {
+		pass: layoutPass,
+		tolerance: layoutTolerance,
+		mismatched: layoutResults.filter((result) => result.status !== "OK").length,
+		total: layoutResults.length,
+	},
 	diffRatio,
 	diffPixels,
 	totalPixels,
@@ -351,10 +391,16 @@ const summary = {
 };
 writeFileSync(join(outDir, "summary.json"), JSON.stringify(summary, null, 2));
 
+if (layoutResults) {
+	writeFileSync(join(outDir, "layout.json"), JSON.stringify({ tolerance: layoutTolerance, warnings: metadataWarnings, results: layoutResults }, null, 2));
+	for (const warning of metadataWarnings) console.log(`警告: ${warning}`);
+	console.log(formatLayoutReport(layoutResults, layoutTolerance));
+}
+
 console.log(
-	`${pass ? "PASS" : "FAIL"} diffRatio=${(diffRatio * 100).toFixed(2)}% (threshold=${(diffRatioThreshold * 100).toFixed(2)}%)`,
+	`${layoutResults ? "[画素] " : ""}${pixelPass ? "PASS" : "FAIL"} diffRatio=${(diffRatio * 100).toFixed(2)}% (threshold=${(diffRatioThreshold * 100).toFixed(2)}%)`,
 );
-if (!pass) {
+if (!pixelPass) {
 	if (clusterReports.length > 0) {
 		console.log("差分クラスタ（CSS px 概算、差分量の大きい順）:");
 		clusterReports.slice(0, MAX_CONSOLE_CLUSTERS).forEach((c, i) => {
