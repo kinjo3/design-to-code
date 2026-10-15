@@ -9,9 +9,9 @@ const { values } = parseArgs({
 	options: {
 		url: { type: "string" },
 		selector: { type: "string" },
-		figma: { type: "string" },
+		design: { type: "string" },
 		width: { type: "string" },
-		"figma-width": { type: "string" },
+		"design-width": { type: "string" },
 		height: { type: "string", default: "1080" },
 		threshold: { type: "string", default: "0.02" },
 		out: { type: "string" },
@@ -25,7 +25,7 @@ function fail(message) {
 	process.exit(1);
 }
 
-const required = ["url", "selector", "figma", "width"];
+const required = ["url", "selector", "design", "width"];
 const missing = required.filter((key) => !values[key]);
 if (missing.length > 0) {
 	fail(`必須引数が不足しています: ${missing.map((k) => `--${k}`).join(", ")}`);
@@ -33,7 +33,7 @@ if (missing.length > 0) {
 
 for (const [name, min] of [
 	["width", 1],
-	["figma-width", 1],
+	["design-width", 1],
 	["height", 1],
 	["threshold", 0],
 	["wait", 0],
@@ -47,32 +47,32 @@ for (const [name, min] of [
 
 const url = values.url;
 const selector = values.selector;
-const figmaPath = values.figma;
+const designPath = values.design;
 const width = Number(values.width);
-// カード 1 枚のようなコンポーネント単位の比較では、ビューポート幅と Figma 書き出し幅が一致しない
-const figmaWidth = values["figma-width"] === undefined ? width : Number(values["figma-width"]);
+// カード 1 枚のようなコンポーネント単位の比較では、ビューポート幅と見本画像に写っている範囲の幅が一致しない
+const designWidth = values["design-width"] === undefined ? width : Number(values["design-width"]);
 const height = Number(values.height);
 const diffRatioThreshold = Number(values.threshold);
 const wait = Number(values.wait);
-// Figma の書き出しに無い固定ヘッダーのように、撮影時だけ伏せたい要素を呼び出し側が指定する
+// 見本画像に無い固定ヘッダーのように、撮影時だけ伏せたい要素を呼び出し側が指定する
 const hideSelector = values.hide;
 
 // 同じセレクタ・同じビューポートで書き出し幅だけ変えた実行が上書きし合わないよう、指定時は幅を重ねる
-const figmaWidthLabel = values["figma-width"] === undefined ? "" : `-${figmaWidth}`;
+const designWidthLabel = values["design-width"] === undefined ? "" : `-${designWidth}`;
 const label =
-	values.out ?? `${selector.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "")}-${width}${figmaWidthLabel}`;
+	values.out ?? `${selector.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "")}-${width}${designWidthLabel}`;
 
 // スクリプトの置き場所に依存しないよう、出力先は実行時のカレントディレクトリ（プロジェクトルート）を基準にする
-const outDir = join(process.cwd(), ".figma-diff", label);
+const outDir = join(process.cwd(), ".design-diff", label);
 mkdirSync(outDir, { recursive: true });
 
-let figmaPng;
+let designPng;
 try {
-	figmaPng = PNG.sync.read(readFileSync(figmaPath));
+	designPng = PNG.sync.read(readFileSync(designPath));
 } catch (error) {
-	fail(`--figma の画像を PNG として読めませんでした: ${figmaPath}\n${error instanceof Error ? error.message : String(error)}`);
+	fail(`--design の画像を PNG として読めませんでした: ${designPath}\n${error instanceof Error ? error.message : String(error)}`);
 }
-const deviceScaleFactor = figmaPng.width / figmaWidth;
+const deviceScaleFactor = designPng.width / designWidth;
 
 // 原因の見当がつく撮影の失敗は案内文だけを出し、それ以外の例外はスタックトレースごと表に出す
 class CaptureError extends Error {}
@@ -90,7 +90,7 @@ function errorText(error) {
 
 // 対象の位置や寸法が小数だと、locator.screenshot() の撮影範囲（各辺を CSS px の整数へ外側に丸める）と、
 // Chromium が実際に描画する範囲（各辺を CSS px の整数へ最も近く丸める）がずれ、画像の縁に何も描かれていない余白が付く。
-// その分だけ寸法と開始位置が Figma とずれて diffRatio が膨らむので、描画された範囲だけを切り出す
+// その分だけ寸法と開始位置が見本画像とずれて diffRatio が膨らむので、描画された範囲だけを切り出す
 function cropToPaintedBox(png, rect) {
 	// 描画範囲の規則は dsf が 1 と 2 のときだけ実測で確かめた。1.5 では対象の端が削れたので、整数でなければ切り出さない
 	if (Math.abs(deviceScaleFactor - Math.round(deviceScaleFactor)) > 1e-6) return png;
@@ -129,7 +129,7 @@ async function captureActual() {
 			);
 		}
 		// ヘッドレスの Chromium はスクロールバーを幅 0 で隠すが、scrollbar-gutter: stable はその幅を確保し続けるので、
-		// Figma のコマには無い空白の帯が右端に写る
+		// 見本画像には無い空白の帯が右端に写る
 		await page.addStyleTag({ content: ":root { scrollbar-gutter: auto !important; }" });
 
 		const locator = page.locator(selector);
@@ -179,8 +179,8 @@ try {
 const screenshotPng = PNG.sync.read(actualBuffer);
 const actualPng = cropToPaintedBox(screenshotPng, targetRect);
 
-const canvasWidth = Math.max(figmaPng.width, actualPng.width);
-const canvasHeight = Math.max(figmaPng.height, actualPng.height);
+const canvasWidth = Math.max(designPng.width, actualPng.width);
+const canvasHeight = Math.max(designPng.height, actualPng.height);
 
 function fillPng(png, [r, g, b]) {
 	for (let i = 0; i < png.data.length; i += 4) {
@@ -198,7 +198,7 @@ function padToCanvas(png) {
 	return canvas;
 }
 
-const figmaCanvas = padToCanvas(figmaPng);
+const designCanvas = padToCanvas(designPng);
 const actualCanvas = padToCanvas(actualPng);
 
 // pixelmatch の diffColor 既定値 [255, 0, 0] のピクセルのみを差分として扱う（aaColor の黄色は除外）
@@ -210,7 +210,7 @@ function isDiffPixel(data, i) {
 const PIXELMATCH_COLOR_THRESHOLD = 0.1;
 
 const diffPng = new PNG({ width: canvasWidth, height: canvasHeight });
-const diffPixels = pixelmatch(figmaCanvas.data, actualCanvas.data, diffPng.data, canvasWidth, canvasHeight, {
+const diffPixels = pixelmatch(designCanvas.data, actualCanvas.data, diffPng.data, canvasWidth, canvasHeight, {
 	threshold: PIXELMATCH_COLOR_THRESHOLD,
 });
 
@@ -266,7 +266,7 @@ function findDiffClusters(diffData) {
 
 const clusters = findDiffClusters(diffPng.data).filter((c) => c.count >= MIN_CLUSTER_PIXELS);
 
-// クラスタ座標は Figma 書き出し幅を基準にした CSS px に換算して報告する
+// クラスタ座標は見本画像に写っている範囲の幅を基準にした CSS px に換算して報告する
 const toCssPx = (cells) => Math.round((cells * CLUSTER_CELL) / deviceScaleFactor);
 const clusterReports = clusters.map((c) => ({
 	x: toCssPx(c.minX),
@@ -276,7 +276,7 @@ const clusterReports = clusters.map((c) => ({
 	diffPixels: c.count,
 }));
 
-// ---- compare.png（figma | actual | diff を縮小して横並びにした閲覧用の 1 枚） ----
+// ---- compare.png（design | actual | diff を縮小して横並びにした閲覧用の 1 枚） ----
 
 const COMPARE_PANE_WIDTH = 400;
 const COMPARE_MAX_HEIGHT = 1000; // 縦長セクションで compare.png が読めない縦横比にならないよう高さも縛る
@@ -327,9 +327,9 @@ function compositeRow(pngs, separator = 4) {
 const compareScale = Math.min(1, COMPARE_PANE_WIDTH / canvasWidth, COMPARE_MAX_HEIGHT / canvasHeight);
 const diffPane = downscale(diffPng, compareScale);
 if (compareScale < 1) markDiffRed(diffPng, diffPane, compareScale);
-const comparePng = compositeRow([downscale(figmaCanvas, compareScale), downscale(actualCanvas, compareScale), diffPane]);
+const comparePng = compositeRow([downscale(designCanvas, compareScale), downscale(actualCanvas, compareScale), diffPane]);
 
-writeFileSync(join(outDir, "figma.png"), PNG.sync.write(figmaCanvas));
+writeFileSync(join(outDir, "design.png"), PNG.sync.write(designCanvas));
 writeFileSync(join(outDir, "actual.png"), PNG.sync.write(actualCanvas));
 writeFileSync(join(outDir, "diff.png"), PNG.sync.write(diffPng));
 writeFileSync(join(outDir, "compare.png"), PNG.sync.write(comparePng));
@@ -340,13 +340,13 @@ const summary = {
 	diffPixels,
 	totalPixels,
 	diffClustersCssPx: clusterReports,
-	figmaSize: { width: figmaPng.width, height: figmaPng.height },
+	designSize: { width: designPng.width, height: designPng.height },
 	actualSize: { width: actualPng.width, height: actualPng.height },
 	screenshotSize: { width: screenshotPng.width, height: screenshotPng.height },
 	targetRectCssPx: targetRect,
 	deviceScaleFactor,
 	diffRatioThreshold,
-	args: { url, selector, figmaPath, width, figmaWidth, height, wait },
+	args: { url, selector, designPath, width, designWidth, height, wait },
 	timestamp: new Date().toISOString(),
 };
 writeFileSync(join(outDir, "summary.json"), JSON.stringify(summary, null, 2));
@@ -366,7 +366,7 @@ if (!pass) {
 		console.log("差分クラスタなし（ノイズ級の微小差分が散在）。compare.png で全体を確認する");
 	}
 	console.log(
-		`画像確認はまず compare.png（figma | actual | diff の縮小横並び）、詰めの確認のみ原寸 3 枚を読む（原寸画像上の座標はクラスタ座標の ${deviceScaleFactor} 倍）`,
+		`画像確認はまず compare.png（design | actual | diff の縮小横並び）、詰めの確認のみ原寸 3 枚を読む（原寸画像上の座標はクラスタ座標の ${deviceScaleFactor} 倍）`,
 	);
 }
 console.log(`出力先: ${outDir}`);
