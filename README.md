@@ -56,4 +56,6 @@ Figma の MCP を使えないプロジェクトでは、Figma の URL の代わ�
 node scripts/design-diff.mjs --url <描画先の URL> --selector "<対象セレクタ>" --design <見本画像> --width <設計幅> --metadata <対象の XML> --metadata <インスタンスの XML> --texts <文字の対応 JSON>
 ```
 
+素材が提供されずプレースホルダーで実装した写真やアイコンは、`--exclude "<セレクタ>"` で見本画像と実装の両方の比較から外せる（複数回指定できる）。外した画素は `diffRatio` の分母にも分子にも入らない。外した範囲は `summary.json` の `excludedCssPx` に記録され、`diff.png` と `compare.png` では青で塗られる。
+
 比較のたびに `.design-diff/<selector>-<width>/` へ `design.png` `actual.png` `diff.png` `compare.png` `summary.json`（`--metadata` を渡した場合は `layout.json` も）が上書きされる。終了コードは、合格が 0、差分ありまたは実行エラーが 1。
