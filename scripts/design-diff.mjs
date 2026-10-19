@@ -18,6 +18,7 @@ const { values } = parseArgs({
 		out: { type: "string" },
 		wait: { type: "string", default: "300" },
 		hide: { type: "string" },
+		exclude: { type: "string", multiple: true },
 		metadata: { type: "string", multiple: true },
 		texts: { type: "string" },
 		"layout-tolerance": { type: "string", default: "1" },
@@ -61,6 +62,9 @@ const diffRatioThreshold = Number(values.threshold);
 const wait = Number(values.wait);
 // 見本画像に無い固定ヘッダーのように、撮影時だけ伏せたい要素を呼び出し側が指定する
 const hideSelector = values.hide;
+// 素材が無くプレースホルダーで実装した要素のように、見本画像と中身が一致しない範囲を比較から外す。
+// --hide は実装側だけを隠すので、見本画像側に残る同じ範囲の差分は diffRatio に残る
+const excludeSelectors = values.exclude ?? [];
 const layoutTolerance = Number(values["layout-tolerance"]);
 
 // Figma の get_metadata の出力を渡されたときだけ、画素差分に加えて要素ごとの箱も比べる
@@ -113,12 +117,20 @@ function errorText(error) {
 		.join("\n");
 }
 
+const hasIntegerScale = Math.abs(deviceScaleFactor - Math.round(deviceScaleFactor)) <= 1e-6;
+
+// 比較用の画像の左上にあたるページ上の位置。除外範囲を画像の座標へ直すために、cropToPaintedBox と同じ規則で求める
+function imageOrigin(rect) {
+	const round = hasIntegerScale ? Math.round : Math.floor;
+	return { x: round(rect.left), y: round(rect.top) };
+}
+
 // 対象の位置や寸法が小数だと、locator.screenshot() の撮影範囲（各辺を CSS px の整数へ外側に丸める）と、
 // Chromium が実際に描画する範囲（各辺を CSS px の整数へ最も近く丸める）がずれ、画像の縁に何も描かれていない余白が付く。
 // その分だけ寸法と開始位置が見本画像とずれて diffRatio が膨らむので、描画された範囲だけを切り出す
 function cropToPaintedBox(png, rect) {
 	// 描画範囲の規則は dsf が 1 と 2 のときだけ実測で確かめた。1.5 では対象の端が削れたので、整数でなければ切り出さない
-	if (Math.abs(deviceScaleFactor - Math.round(deviceScaleFactor)) > 1e-6) return png;
+	if (!hasIntegerScale) return png;
 	const toDevicePx = (cssPx) => Math.round(cssPx * deviceScaleFactor);
 	const paintedLeft = Math.round(rect.left);
 	const paintedTop = Math.round(rect.top);
@@ -186,8 +198,24 @@ async function captureActual() {
 				bottom: r.bottom + window.scrollY,
 			};
 		});
+		const excludeBoxes = [];
+		for (const excludeSelector of excludeSelectors) {
+			const boxes = await page.locator(excludeSelector).evaluateAll((els) =>
+				els
+					.map((el) => {
+						const r = el.getBoundingClientRect();
+						return { left: r.left + window.scrollX, top: r.top + window.scrollY, right: r.right + window.scrollX, bottom: r.bottom + window.scrollY };
+					})
+					.filter((r) => r.right > r.left && r.bottom > r.top),
+			);
+			// セレクタの打ち間違いで何も外れないまま、除外したつもりで合否を出さないようにする
+			if (boxes.length === 0) {
+				throw new CaptureError(`--exclude の要素が見つからないか、描画された範囲を持ちません: ${excludeSelector}`);
+			}
+			excludeBoxes.push({ selector: excludeSelector, boxes });
+		}
 		const domBoxes = figmaNodes ? await locator.evaluate(collectDomBoxes) : null;
-		return { buffer: await locator.screenshot(), rect, domBoxes };
+		return { buffer: await locator.screenshot(), rect, domBoxes, excludeBoxes };
 	} finally {
 		await browser.close();
 	}
@@ -196,8 +224,9 @@ async function captureActual() {
 let actualBuffer;
 let targetRect;
 let domBoxes;
+let excludeBoxes;
 try {
-	({ buffer: actualBuffer, rect: targetRect, domBoxes } = await captureActual());
+	({ buffer: actualBuffer, rect: targetRect, domBoxes, excludeBoxes } = await captureActual());
 } catch (error) {
 	if (error instanceof CaptureError) fail(error.message);
 	throw error;
@@ -228,6 +257,38 @@ function padToCanvas(png) {
 const designCanvas = padToCanvas(designPng);
 const actualCanvas = padToCanvas(actualPng);
 
+// ---- 比較から外す範囲 ----
+
+const EXCLUDED_COLOR = [0, 160, 255];
+const origin = imageOrigin(targetRect);
+const excludedMask = new Uint8Array(canvasWidth * canvasHeight);
+const deviceToCssPx = (devicePx) => Math.round((devicePx / deviceScaleFactor) * 100) / 100;
+const excludedReports = excludeBoxes.map(({ selector: excludeSelector, boxes }) => ({
+	selector: excludeSelector,
+	rectsCssPx: boxes.map((box) => {
+		const left = Math.max(0, Math.floor((box.left - origin.x) * deviceScaleFactor));
+		const top = Math.max(0, Math.floor((box.top - origin.y) * deviceScaleFactor));
+		const right = Math.min(canvasWidth, Math.ceil((box.right - origin.x) * deviceScaleFactor));
+		const bottom = Math.min(canvasHeight, Math.ceil((box.bottom - origin.y) * deviceScaleFactor));
+		for (let y = top; y < bottom; y++) excludedMask.fill(1, y * canvasWidth + left, y * canvasWidth + Math.max(left, right));
+		return { x: deviceToCssPx(left), y: deviceToCssPx(top), width: deviceToCssPx(Math.max(0, right - left)), height: deviceToCssPx(Math.max(0, bottom - top)) };
+	}),
+}));
+const excludedPixels = excludedMask.reduce((sum, flag) => sum + flag, 0);
+
+// 両方の画像の同じ範囲を同じ色で塗ると、pixelmatch は差分なしと判定し、外した範囲が design.png と actual.png でも分かる
+function paintExcluded(png) {
+	for (let i = 0; i < excludedMask.length; i++) {
+		if (!excludedMask[i]) continue;
+		png.data[i * 4] = EXCLUDED_COLOR[0];
+		png.data[i * 4 + 1] = EXCLUDED_COLOR[1];
+		png.data[i * 4 + 2] = EXCLUDED_COLOR[2];
+		png.data[i * 4 + 3] = 255;
+	}
+}
+paintExcluded(designCanvas);
+paintExcluded(actualCanvas);
+
 // pixelmatch の diffColor 既定値 [255, 0, 0] のピクセルのみを差分として扱う（aaColor の黄色は除外）
 function isDiffPixel(data, i) {
 	return data[i] === 255 && data[i + 1] === 0 && data[i + 2] === 0;
@@ -241,7 +302,10 @@ const diffPixels = pixelmatch(designCanvas.data, actualCanvas.data, diffPng.data
 	threshold: PIXELMATCH_COLOR_THRESHOLD,
 });
 
-const totalPixels = canvasWidth * canvasHeight;
+// pixelmatch は差分のない画素を薄いグレーに描くので、外した範囲は塗り直して差分なしの画素と区別する
+paintExcluded(diffPng);
+
+const totalPixels = canvasWidth * canvasHeight - excludedPixels;
 const diffRatio = diffPixels / totalPixels;
 const pixelPass = diffRatio <= diffRatioThreshold;
 
@@ -379,6 +443,8 @@ const summary = {
 	diffRatio,
 	diffPixels,
 	totalPixels,
+	excludedPixels,
+	excludedCssPx: excludedReports,
 	diffClustersCssPx: clusterReports,
 	designSize: { width: designPng.width, height: designPng.height },
 	actualSize: { width: actualPng.width, height: actualPng.height },
@@ -386,7 +452,7 @@ const summary = {
 	targetRectCssPx: targetRect,
 	deviceScaleFactor,
 	diffRatioThreshold,
-	args: { url, selector, designPath, width, designWidth, height, wait },
+	args: { url, selector, designPath, width, designWidth, height, wait, exclude: excludeSelectors },
 	timestamp: new Date().toISOString(),
 };
 writeFileSync(join(outDir, "summary.json"), JSON.stringify(summary, null, 2));
@@ -400,6 +466,10 @@ if (layoutResults) {
 console.log(
 	`${layoutResults ? "[画素] " : ""}${pixelPass ? "PASS" : "FAIL"} diffRatio=${(diffRatio * 100).toFixed(2)}% (threshold=${(diffRatioThreshold * 100).toFixed(2)}%)`,
 );
+if (excludedPixels > 0) {
+	const excludedCount = excludedReports.reduce((sum, report) => sum + report.rectsCssPx.length, 0);
+	console.log(`比較から外した範囲: ${excludedCount} 件（${excludedPixels} 画素、diffRatio の分母から除く。diff.png では青で塗る）`);
+}
 if (!pixelPass) {
 	if (clusterReports.length > 0) {
 		console.log("差分クラスタ（CSS px 概算、差分量の大きい順）:");
