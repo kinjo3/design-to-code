@@ -58,4 +58,6 @@ node scripts/design-diff.mjs --url <描画先の URL> --selector "<対象セレ�
 
 素材が提供されずプレースホルダーで実装した写真やアイコンは、`--exclude "<セレクタ>"` で見本画像と実装の両方の比較から外せる（複数回指定できる）。外した画素は `diffRatio` の分母にも分子にも入らない。外した範囲は `summary.json` の `excludedCssPx` に記録され、`diff.png` と `compare.png` では青で塗られる。
 
+ビルドが必要なプロジェクトでは、`--build "<ビルドコマンド>"` を渡すと、撮影の直前にプロジェクトルートでそのコマンドを実行する。ビルドが失敗したら差分を測らず、ビルドの出力の末尾 20 行を出して終了コード 1 で終わる。`design-diff.mjs` はサンドボックスから除外して実行するので、ビルドのコマンドもサンドボックスの外で動く。
+
 比較のたびに `.design-diff/<selector>-<width>/` へ `design.png` `actual.png` `diff.png` `compare.png` `summary.json`（`--metadata` を渡した場合は `layout.json` も）が上書きされる。終了コードは、合格が 0、差分ありまたは実行エラーが 1。
