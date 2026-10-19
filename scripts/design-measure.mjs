@@ -152,10 +152,20 @@ if (command === "color") {
 	let maxX = -1;
 	let maxY = -1;
 	let contentColor = null;
+	let fringeMinX = Infinity;
+	let fringeMinY = Infinity;
+	let fringeMaxX = -1;
+	let fringeMaxY = -1;
 	for (let py = top; py < bottom; py++) {
 		for (let px = left; px < right; px++) {
 			const color = pixel(px, py);
 			const d = distance(color, background);
+			if (d > tolerance) {
+				fringeMinX = Math.min(fringeMinX, px);
+				fringeMinY = Math.min(fringeMinY, py);
+				fringeMaxX = Math.max(fringeMaxX, px);
+				fringeMaxY = Math.max(fringeMaxY, py);
+			}
 			if (d < threshold) continue;
 			minX = Math.min(minX, px);
 			minY = Math.min(minY, py);
@@ -168,6 +178,12 @@ if (command === "color") {
 	console.log(
 		`中身の外接矩形: x=${toCssPx(minX)} y=${toCssPx(minY)} 幅=${toCssPx(maxX + 1 - minX)} 高さ=${toCssPx(maxY + 1 - minY)}`,
 	);
+	// 丸い字の上下へのはみ出しは薄い縁になる。2 つの高さの差が、1 字の高さから文字サイズを見積もるときの誤差の目安になる
+	if (fringeMinX < minX || fringeMinY < minY || fringeMaxX > maxX || fringeMaxY > maxY) {
+		console.log(
+			`薄い縁まで含めた外接矩形: x=${toCssPx(fringeMinX)} y=${toCssPx(fringeMinY)} 幅=${toCssPx(fringeMaxX + 1 - fringeMinX)} 高さ=${toCssPx(fringeMaxY + 1 - fringeMinY)}`,
+		);
+	}
 } else {
 	fail(USAGE);
 }
