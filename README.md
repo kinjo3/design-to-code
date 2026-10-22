@@ -30,16 +30,16 @@ Claude Code のプラグイン `design-to-code`（`plugin/`）として配る。
 
 ## 使い方
 
-開発サーバーを起動した状態で、Claude Code に Figma の URL を渡して依頼する。
+開発サーバーを起動した状態で、Claude Code に Figma の URL を渡して依頼する。`/design-to-code` という名前のコマンドがほかにあるプロジェクトでは、`/design-to-code:design-to-code` で呼ぶ。
 
 ```text
-/design-to-code:design-to-code https://www.figma.com/design/<file>?node-id=1-2 を実装して
+/design-to-code https://www.figma.com/design/<file>?node-id=1-2 を実装して
 ```
 
 Figma の MCP を使えないプロジェクトでは、Figma の URL の代わりにデザイン画像（PNG）のパスを渡す。画像ごとに、画像に写っている範囲をキャプチャしたときの表示幅（CSS px）を添える。画像がビューポートの全幅を写していない場合は、どのビューポート幅での表示かも添える。同じセクションのブレークポイント別の画像は 1 回の依頼にまとめて渡せる。デザイン内の写真・アイコンは、素材を渡さなければプレースホルダーで実装される。色と寸法は、`design-measure` で画像の画素から測る。
 
 ```text
-/design-to-code:design-to-code design/hero-pc.png（表示幅 1440）と design/hero-sp.png（表示幅 375）を実装して
+/design-to-code design/hero-pc.png（表示幅 1440）と design/hero-sp.png（表示幅 375）を実装して
 ```
 
 実装後、`design-diff` が見本画像と実装の描画結果を比べる。Figma の `get_metadata` の出力（XML）を `--metadata` で渡すと、ノードごとの箱も比べる。`get_metadata` はインスタンスの内部を返さないので、インスタンスごとに呼んだ出力も `--metadata` を繰り返して渡す。`--texts` には node id と文字列の対応 JSON を渡す。文字を持つノードは文字列で、それ以外は箱の近さで実装側の要素と対応付ける。
