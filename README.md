@@ -12,6 +12,7 @@ Figma の URL またはデザイン画像から実装するスキル `design-to-
    | --- | --- |
    | `scripts/design-diff.mjs` | `scripts/design-diff.mjs` |
    | `scripts/design-layout.mjs` | `scripts/design-layout.mjs` |
+   | `scripts/design-target.mjs` | `scripts/design-target.mjs` |
    | `scripts/design-measure.mjs` | `scripts/design-measure.mjs`（デザイン画像を使う場合） |
    | `.claude/skills/design-to-code/` | `.claude/skills/design-to-code/` |
 
@@ -58,4 +59,12 @@ node scripts/design-diff.mjs --url <描画先の URL> --selector "<対象セレ�
 
 素材が提供されずプレースホルダーで実装した写真やアイコンは、`--exclude "<セレクタ>"` で見本画像と実装の両方の比較から外せる（複数回指定できる）。外した画素は `diffRatio` の分母にも分子にも入らない。外した範囲は `summary.json` の `excludedCssPx` に記録され、`diff.png` と `compare.png` では青で塗られる。
 
+ビルドが必要なプロジェクトでは、`--build "<ビルドコマンド>"` を渡すと、撮影の直前にプロジェクトルートでそのコマンドを実行する。ビルドが失敗したら差分を測らず、ビルドの出力の末尾 20 行を出して終了コード 1 で終わる。`design-diff.mjs` はサンドボックスから除外して実行するので、ビルドのコマンドもサンドボックスの外で動く。
+
 比較のたびに `.design-diff/<selector>-<width>/` へ `design.png` `actual.png` `diff.png` `compare.png` `summary.json`（`--metadata` を渡した場合は `layout.json` も）が上書きされる。終了コードは、合格が 0、差分ありまたは実行エラーが 1。
+
+### 差分チェックの完走
+
+スキルを呼んだセッションでは、スキルの frontmatter に書いた Stop hook（`scripts/design-target.mjs stop-hook`）が有効になる。settings.json への追記は要らない。スキルが登録したセレクタと幅の組のどれかが、合格も調整 3 回での打ち切りもしていないまま Claude Code が終えようとすると、hook が理由（未実行・未合格・合格後に未再実行）を返して終了を止める。合格後に未再実行かどうかは、計測時と終了時の作業ツリーのハッシュ（HEAD と、コミットしていないファイルの中身から求める）を比べて決める。git で管理していないプロジェクトと、親のリポジトリが `.gitignore` などで除外しているディレクトリでは、合否と調整回数だけで判定する。前回止めたときから実行記録も作業ツリーも変わっていなければ、同じ理由では止めない。
+
+Stop hook はサンドボックスの外で動く。登録はセッションごとに `.design-diff/sessions/<セッション ID>.json` へ、実行記録は `.design-diff/<selector>-<width>/runs.jsonl` へ残る。

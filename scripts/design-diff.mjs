@@ -1,10 +1,12 @@
 import { parseArgs } from "node:util";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import pixelmatch from "pixelmatch";
 import { PNG } from "pngjs";
 import { collectDomBoxes, compareLayout, formatLayoutReport, parseMetadata } from "./design-layout.mjs";
+import { runLogPath, targetLabel, workingTreeHash } from "./design-target.mjs";
 
 const { values } = parseArgs({
 	options: {
@@ -22,6 +24,7 @@ const { values } = parseArgs({
 		metadata: { type: "string", multiple: true },
 		texts: { type: "string" },
 		"layout-tolerance": { type: "string", default: "1" },
+		build: { type: "string" },
 	},
 });
 
@@ -86,10 +89,7 @@ if (values.texts) {
 	}
 }
 
-// 同じセレクタ・同じビューポートで書き出し幅だけ変えた実行が上書きし合わないよう、指定時は幅を重ねる
-const designWidthLabel = values["design-width"] === undefined ? "" : `-${designWidth}`;
-const label =
-	values.out ?? `${selector.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "")}-${width}${designWidthLabel}`;
+const label = targetLabel({ selector, width, designWidth: values["design-width"], out: values.out });
 
 // スクリプトの置き場所に依存しないよう、出力先は実行時のカレントディレクトリ（プロジェクトルート）を基準にする
 const outDir = join(process.cwd(), ".design-diff", label);
@@ -102,6 +102,23 @@ try {
 	fail(`--design の画像を PNG として読めませんでした: ${designPath}\n${error instanceof Error ? error.message : String(error)}`);
 }
 const deviceScaleFactor = designPng.width / designWidth;
+
+// ビルドと撮影を別のコマンドにすると、AI がビルドし忘れたまま変更前の描画を測り、調整が効かなかったと誤って判断する。
+// 撮影の直前に同じ実行の中でビルドし、失敗したら測らない
+const BUILD_OUTPUT_TAIL_LINES = 20; // ビルドのログ全文を読ませると、原因の行が埋もれるうえにトークンを使う
+// spawnSync は既定で 1MB を超える出力を受け取るとビルドを止めるので、ログの多いビルドでも最後まで走らせる
+const BUILD_MAX_BUFFER = 64 * 1024 * 1024;
+if (values.build) {
+	const build = spawnSync(values.build, { shell: true, encoding: "utf8", maxBuffer: BUILD_MAX_BUFFER });
+	if (build.status !== 0) {
+		const output = `${build.stdout ?? ""}${build.stderr ?? ""}${build.error ? `\n${build.error.message}` : ""}`.trimEnd();
+		const tail = output.split("\n").slice(-BUILD_OUTPUT_TAIL_LINES).join("\n");
+		fail(`ビルドに失敗したので差分を測りませんでした: ${values.build}（終了コード ${build.status ?? build.signal}）\n${tail}`);
+	}
+	console.log(`ビルド済み: ${values.build}`);
+}
+// ビルド生成物を git で追跡しているプロジェクトでは、ビルドで作業ツリーが変わるので、ビルドのあとに求める
+const treeHash = workingTreeHash(process.cwd());
 
 // 原因の見当がつく撮影の失敗は案内文だけを出し、それ以外の例外はスタックトレースごと表に出す
 class CaptureError extends Error {}
@@ -452,10 +469,15 @@ const summary = {
 	targetRectCssPx: targetRect,
 	deviceScaleFactor,
 	diffRatioThreshold,
-	args: { url, selector, designPath, width, designWidth, height, wait, exclude: excludeSelectors },
+	args: { url, selector, designPath, width, designWidth, height, wait, exclude: excludeSelectors, build: values.build },
 	timestamp: new Date().toISOString(),
 };
 writeFileSync(join(outDir, "summary.json"), JSON.stringify(summary, null, 2));
+// summary.json は毎回上書きされるので、Stop hook が試行回数と計測後の変更の有無を確かめられるよう、実行ごとに 1 行残す
+appendFileSync(
+	runLogPath(process.cwd(), label),
+	`${JSON.stringify({ at: summary.timestamp, pass, diffRatio, treeHash })}\n`,
+);
 
 if (layoutResults) {
 	writeFileSync(join(outDir, "layout.json"), JSON.stringify({ tolerance: layoutTolerance, warnings: metadataWarnings, results: layoutResults }, null, 2));
