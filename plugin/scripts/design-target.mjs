@@ -152,7 +152,7 @@ function stopHook() {
 	const reason = [
 		"design-to-code の差分チェックが終わっていません。",
 		...lines,
-		"SKILL.md の Step 5 に沿って design-diff.mjs を実行し、合格するか調整が上限に達するまで続けてください。",
+		"SKILL.md の Step 5 に沿って design-diff を実行し、合格するか調整が上限に達するまで続けてください。",
 		"開発サーバーが止まっているなど差分チェックを実行できない場合は、その理由をユーザーに報告して終えてください。",
 	].join("\n");
 	console.log(JSON.stringify({ decision: "block", reason }));
@@ -162,5 +162,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 	const [command, ...argv] = process.argv.slice(2);
 	if (command === "register") register(argv);
 	else if (command === "stop-hook") stopHook();
-	else fail("使い方: node scripts/design-target.mjs register --session <ID> --selector <セレクタ> --width <幅> [--design-width <幅>] [--out <名前>]");
+	else fail("使い方: design-target register --session <ID> --selector <セレクタ> --width <幅> [--design-width <幅>] [--out <名前>]");
 }
