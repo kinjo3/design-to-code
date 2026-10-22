@@ -1,0 +1,6 @@
+{
+	"name": "design-to-code",
+	"description": "Figma の URL またはデザイン画像から実装し、見本との差分が閾値に収まるまで調整する",
+	"author": { "name": "kinjo3" },
+	"repository": "https://github.com/kinjo3/design-to-code"
+}

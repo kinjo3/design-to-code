@@ -3,9 +3,9 @@ import { readFileSync } from "node:fs";
 import { PNG } from "pngjs";
 
 const USAGE = `使い方:
-  node scripts/design-measure.mjs --image <PNG> --design-width <表示幅> color <x>,<y> [<x>,<y> ...]
-  node scripts/design-measure.mjs --image <PNG> --design-width <表示幅> edges row <y> | col <x>
-  node scripts/design-measure.mjs --image <PNG> --design-width <表示幅> box <x>,<y>,<幅>,<高さ>
+  design-measure --image <PNG> --design-width <表示幅> color <x>,<y> [<x>,<y> ...]
+  design-measure --image <PNG> --design-width <表示幅> edges row <y> | col <x>
+  design-measure --image <PNG> --design-width <表示幅> box <x>,<y>,<幅>,<高さ>
 座標と寸法はすべて CSS px（画像の左上が 0,0、小数も可）
 box は、指定した範囲の左上の画素を背景の色とみなす。範囲は中身より一回り大きく取る
 --tolerance <数値>（既定 12）: 同じ色とみなす RGBA の差の合計。薄い罫線が edges で区切られないときは下げる`;

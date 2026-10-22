@@ -1,0 +1,12 @@
+{
+	"name": "design-to-code",
+	"owner": { "name": "kinjo3" },
+	"description": "デザインから実装し、見本との差分が閾値に収まるまで調整する Claude Code のプラグイン",
+	"plugins": [
+		{
+			"name": "design-to-code",
+			"source": "./plugin",
+			"description": "Figma の URL またはデザイン画像から実装し、見本との差分が閾値に収まるまで調整する"
+		}
+	]
+}

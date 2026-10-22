@@ -1,0 +1,3 @@
+#!/bin/sh
+# npx playwright install は npx が解決した版のブラウザを入れるので、プラグインが依存する playwright の版と食い違うことがある
+exec node "$(dirname "$0")/../node_modules/playwright/cli.js" install chromium
