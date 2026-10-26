@@ -122,9 +122,15 @@ function judge(projectDir, target, treeHash) {
 	const adjustments = runs.length - 1;
 	if (adjustments >= MAX_ADJUSTMENTS) return { done: true };
 	if (latest.pass) return { done: false, reason: "合格したあとにファイルが変わったが、差分チェックを再実行していない" };
+	// 件数を記録していない以前の実行記録では、どの判定で落ちたかが分からないので diffRatio だけを出す
+	const failures = [
+		latest.layoutMismatched > 0 && `箱のずれ・未対応 ${latest.layoutMismatched} 件`,
+		latest.edgeMismatched > 0 && `辺のずれ ${latest.edgeMismatched} 件`,
+		`diffRatio ${(latest.diffRatio * 100).toFixed(2)}%${latest.pixelPass === false ? "（閾値超え）" : ""}`,
+	].filter(Boolean);
 	return {
 		done: false,
-		reason: `pass: false のまま（diffRatio ${(latest.diffRatio * 100).toFixed(2)}%、調整 ${adjustments}/${MAX_ADJUSTMENTS} 回）`,
+		reason: `pass: false のまま（${failures.join("、")}、調整 ${adjustments}/${MAX_ADJUSTMENTS} 回）`,
 	};
 }
 
