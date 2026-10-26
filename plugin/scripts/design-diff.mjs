@@ -232,9 +232,10 @@ async function captureActual() {
 			}
 			excludeBoxes.push({ selector: excludeSelector, boxes });
 		}
+		const domBoxes = figmaNodes ? await locator.evaluate(collectDomBoxes) : null;
 		// Figma のノードが無い実行では、突き合わせる箱がデザイン側に無いので、実装側の要素の辺をデザイン画像の中で探す
-		const domBoxes = await locator.evaluate(figmaNodes ? collectDomBoxes : collectElementBoxes);
-		return { buffer: await locator.screenshot(), rect, domBoxes, excludeBoxes };
+		const elementBoxes = figmaNodes ? null : await locator.evaluate(collectElementBoxes);
+		return { buffer: await locator.screenshot(), rect, domBoxes, elementBoxes, excludeBoxes };
 	} finally {
 		await browser.close();
 	}
@@ -243,9 +244,10 @@ async function captureActual() {
 let actualBuffer;
 let targetRect;
 let domBoxes;
+let elementBoxes;
 let excludeBoxes;
 try {
-	({ buffer: actualBuffer, rect: targetRect, domBoxes, excludeBoxes } = await captureActual());
+	({ buffer: actualBuffer, rect: targetRect, domBoxes, elementBoxes, excludeBoxes } = await captureActual());
 } catch (error) {
 	if (error instanceof CaptureError) fail(error.message);
 	throw error;
@@ -338,7 +340,7 @@ const layoutPass = layoutResults === null || layoutResults.every((result) => res
 // 要素の箱は対象の左上が原点なので、比較用の画像の左上（origin）との差だけずらして画像の座標に直す
 const edgeResults = figmaNodes
 	? null
-	: compareEdges(designPng, actualPng, domBoxes, {
+	: compareEdges(designPng, actualPng, elementBoxes, {
 			scale: deviceScaleFactor,
 			offset: { x: targetRect.left - origin.x, y: targetRect.top - origin.y },
 			tolerance: layoutTolerance,
@@ -496,10 +498,19 @@ const summary = {
 	timestamp: new Date().toISOString(),
 };
 writeFileSync(join(outDir, "summary.json"), JSON.stringify(summary, null, 2));
-// summary.json は毎回上書きされるので、Stop hook が試行回数と計測後の変更の有無を確かめられるよう、実行ごとに 1 行残す
+// summary.json は毎回上書きされるので、Stop hook が試行回数と計測後の変更の有無を確かめられるよう、実行ごとに 1 行残す。
+// 箱や辺だけで不合格になると diffRatio は閾値内に収まっているので、どの判定で落ちたかを Stop hook の理由に出せるよう件数も残す
 appendFileSync(
 	runLogPath(process.cwd(), label),
-	`${JSON.stringify({ at: summary.timestamp, pass, diffRatio, treeHash })}\n`,
+	`${JSON.stringify({
+		at: summary.timestamp,
+		pass,
+		pixelPass,
+		diffRatio,
+		layoutMismatched: summary.layout?.mismatched ?? null,
+		edgeMismatched: summary.edges?.mismatched ?? null,
+		treeHash,
+	})}\n`,
 );
 
 if (layoutResults) {
