@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { chromium } from "playwright";
 import pixelmatch from "pixelmatch";
 import { PNG } from "pngjs";
+import { collectElementBoxes, compareEdges, formatEdgeReport } from "./design-edges.mjs";
 import { collectDomBoxes, compareLayout, formatLayoutReport, parseMetadata } from "./design-layout.mjs";
 import { runLogPath, targetLabel, workingTreeHash } from "./design-target.mjs";
 
@@ -231,7 +232,8 @@ async function captureActual() {
 			}
 			excludeBoxes.push({ selector: excludeSelector, boxes });
 		}
-		const domBoxes = figmaNodes ? await locator.evaluate(collectDomBoxes) : null;
+		// Figma のノードが無い実行では、突き合わせる箱がデザイン側に無いので、実装側の要素の辺をデザイン画像の中で探す
+		const domBoxes = await locator.evaluate(figmaNodes ? collectDomBoxes : collectElementBoxes);
 		return { buffer: await locator.screenshot(), rect, domBoxes, excludeBoxes };
 	} finally {
 		await browser.close();
@@ -330,7 +332,21 @@ const pixelPass = diffRatio <= diffRatioThreshold;
 
 const layoutResults = figmaNodes ? compareLayout(figmaNodes, domBoxes, nodeTexts, layoutTolerance) : null;
 const layoutPass = layoutResults === null || layoutResults.every((result) => result.status === "OK");
-const pass = pixelPass && layoutPass;
+
+// ---- 要素の辺の比較（デザイン画像の入力） ----
+
+// 要素の箱は対象の左上が原点なので、比較用の画像の左上（origin）との差だけずらして画像の座標に直す
+const edgeResults = figmaNodes
+	? null
+	: compareEdges(designPng, actualPng, domBoxes, {
+			scale: deviceScaleFactor,
+			offset: { x: targetRect.left - origin.x, y: targetRect.top - origin.y },
+			tolerance: layoutTolerance,
+			isExcluded: (x, y) => excludedMask[y * canvasWidth + x] === 1,
+		});
+const edgeDecided = edgeResults?.filter((result) => result.status !== "判定不能") ?? [];
+const edgePass = edgeDecided.every((result) => result.status === "OK");
+const pass = pixelPass && layoutPass && edgePass;
 
 // ---- 差分クラスタ ----
 // AI が画像を読まずに修正箇所のあたりを付けるための概算レポート。座標はセル（16px）精度で十分とする。
@@ -457,6 +473,13 @@ const summary = {
 		mismatched: layoutResults.filter((result) => result.status !== "OK").length,
 		total: layoutResults.length,
 	},
+	edges: edgeResults && {
+		pass: edgePass,
+		tolerance: layoutTolerance,
+		mismatched: edgeDecided.filter((result) => result.status !== "OK").length,
+		decided: edgeDecided.length,
+		undecided: edgeResults.length - edgeDecided.length,
+	},
 	diffRatio,
 	diffPixels,
 	totalPixels,
@@ -484,9 +507,13 @@ if (layoutResults) {
 	for (const warning of metadataWarnings) console.log(`警告: ${warning}`);
 	console.log(formatLayoutReport(layoutResults, layoutTolerance));
 }
+if (edgeResults) {
+	writeFileSync(join(outDir, "edges.json"), JSON.stringify({ tolerance: layoutTolerance, results: edgeResults }, null, 2));
+	console.log(formatEdgeReport(edgeResults, layoutTolerance));
+}
 
 console.log(
-	`${layoutResults ? "[画素] " : ""}${pixelPass ? "PASS" : "FAIL"} diffRatio=${(diffRatio * 100).toFixed(2)}% (threshold=${(diffRatioThreshold * 100).toFixed(2)}%)`,
+	`[画素] ${pixelPass ? "PASS" : "FAIL"} diffRatio=${(diffRatio * 100).toFixed(2)}% (threshold=${(diffRatioThreshold * 100).toFixed(2)}%)`,
 );
 if (excludedPixels > 0) {
 	const excludedCount = excludedReports.reduce((sum, report) => sum + report.rectsCssPx.length, 0);
