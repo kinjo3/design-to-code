@@ -2,7 +2,7 @@ import { parseArgs } from "node:util";
 import { spawnSync } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { chromium } from "playwright";
+import { chromium } from "playwright-core";
 import pixelmatch from "pixelmatch";
 import { PNG } from "pngjs";
 import { collectElementBoxes, compareEdges, formatEdgeReport } from "./design-edges.mjs";
@@ -166,10 +166,11 @@ function cropToPaintedBox(png, rect) {
 async function captureActual() {
 	let browser;
 	try {
-		browser = await chromium.launch();
+		// playwright が版を固定して配る Chromium ではなく自動更新される Chrome を使い、ブラウザの脆弱性の修正をプラグインの更新から切り離す
+		browser = await chromium.launch({ channel: "chrome" });
 	} catch (error) {
 		throw new CaptureError(
-			`Chromium を起動できません。playwright install chromium を実行済みか、サンドボックス内で実行していないか確認してください。\n${errorText(error)}`,
+			`Chrome を起動できません。Google Chrome がインストールされているか、サンドボックス内で実行していないか確認してください。\n${errorText(error)}`,
 		);
 	}
 	try {
