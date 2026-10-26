@@ -124,7 +124,7 @@ function judge(projectDir, target, treeHash) {
 	if (latest.pass) return { done: false, reason: "合格したあとにファイルが変わったが、差分チェックを再実行していない" };
 	// 件数を記録していない以前の実行記録では、どの判定で落ちたかが分からないので diffRatio だけを出す
 	const failures = [
-		latest.layoutMismatched > 0 && `箱のずれ ${latest.layoutMismatched} 件`,
+		latest.layoutMismatched > 0 && `箱のずれ・未対応 ${latest.layoutMismatched} 件`,
 		latest.edgeMismatched > 0 && `辺のずれ ${latest.edgeMismatched} 件`,
 		`diffRatio ${(latest.diffRatio * 100).toFixed(2)}%${latest.pixelPass === false ? "（閾値超え）" : ""}`,
 	].filter(Boolean);

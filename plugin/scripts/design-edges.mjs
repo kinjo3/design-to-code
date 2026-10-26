@@ -31,16 +31,17 @@ export function collectElementBoxes(root) {
 				return [...range.getClientRects()].filter((r) => r.width > 0 && r.height > 0);
 			});
 			// 字の端は、行の箱から斜体やアクセントの分だけはみ出すことがあるので 1px 広げる。
-			// 視覚的に隠した文字（sr-only など）は要素の箱で切り取られて描かれないので、広げたあとに要素の箱で切り取る
+			// 視覚的に隠した文字（sr-only など）や祖先に切り取られた文字は描かれず、その位置には別の要素が写るので、
+			// 広げたあとに要素自身と祖先の切り取る範囲で切り取る
 			const clips = style.overflowX !== "visible" || style.overflowY !== "visible" || style.clip !== "auto" || style.clipPath !== "none";
 			const textBox =
 				textRects.length === 0
 					? null
 					: toBox({
-							left: Math.max(Math.min(...textRects.map((r) => r.left)) - 1, clips ? rect.left : -Infinity),
-							top: Math.max(Math.min(...textRects.map((r) => r.top)) - 1, clips ? rect.top : -Infinity),
-							right: Math.min(Math.max(...textRects.map((r) => r.right)) + 1, clips ? rect.right : Infinity),
-							bottom: Math.min(Math.max(...textRects.map((r) => r.bottom)) + 1, clips ? rect.bottom : Infinity),
+							left: Math.max(Math.min(...textRects.map((r) => r.left)) - 1, clips ? rect.left : -Infinity, clip.left),
+							top: Math.max(Math.min(...textRects.map((r) => r.top)) - 1, clips ? rect.top : -Infinity, clip.top),
+							right: Math.min(Math.max(...textRects.map((r) => r.right)) + 1, clips ? rect.right : Infinity, clip.right),
+							bottom: Math.min(Math.max(...textRects.map((r) => r.bottom)) + 1, clips ? rect.bottom : Infinity, clip.bottom),
 						});
 			// rounded-full の無限大の半径も、描かれる角丸は短辺の半分で頭打ちになる
 			const radius = (value) => Math.min(parseFloat(value) * (value.endsWith("%") ? Math.min(rect.width, rect.height) / 100 : 1), rect.width / 2, rect.height / 2);
