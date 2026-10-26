@@ -190,9 +190,9 @@ function designGlyphBounds(png, actual, scale, isExcluded) {
 	);
 	if (window.right <= window.left || window.bottom <= window.top) return null;
 	const contrast = contrastMap(png, window, isExcluded);
+	if (contrast.max <= COLOR_TOLERANCE) return null;
 	// 隣にもっと濃い要素があってもデザイン画像側の字を拾えるよう、実装側の字の濃さとの小さいほうで切る
 	const threshold = Math.min(contrast.max, actual.contrast) / 2;
-	if (contrast.max <= COLOR_TOLERANCE) return null;
 	const isContent = (x, y) => contrast.at(x, y) >= threshold;
 	const columnsFrom = Math.max(window.left, actual.left);
 	const columnsTo = Math.min(window.right, actual.right);
@@ -271,13 +271,13 @@ function measureBoxEdge(edge, designPng, actualPng, scale, isExcluded) {
 	let readableCount = 0;
 	for (const along of evenlySpaced(edge.sampleFrom, edge.sampleTo)) {
 		// 帯の片側が比較から外した範囲や画像の外にかかる列は、残った片側だけでは境界の有無も位置も決まらない
-		const band = [];
-		for (let across = bandStart; across < bandEnd; across++) band.push(read(actualPng, along, across));
-		if (band.includes(null)) continue;
-		const outside = band[outsideAt - bandStart];
+		const bandColors = [];
+		for (let across = bandStart; across < bandEnd; across++) bandColors.push(read(actualPng, along, across));
+		if (bandColors.includes(null)) continue;
+		const outside = bandColors[outsideAt - bandStart];
 		readableCount++;
 		// 帯の内側の端の 1 画素とだけ比べると、1px の枠線のように帯の途中にしか色の無い境界を見落とす
-		const hasBoundary = band.some((color) => colorDistance(color, outside) > COLOR_TOLERANCE);
+		const hasBoundary = bandColors.some((color) => colorDistance(color, outside) > COLOR_TOLERANCE);
 		// 入れ物の一部だけに子の背景が重なる辺では、境界の無い列まで照合すると子の中身に引きずられる
 		if (hasBoundary) columns.push({ along, outside });
 	}
