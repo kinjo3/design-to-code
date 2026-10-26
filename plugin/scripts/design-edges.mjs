@@ -18,8 +18,10 @@ export function collectElementBoxes(root) {
 		right: rect.right - rootRect.left,
 		bottom: rect.bottom - rootRect.top,
 	});
-	const walk = (element) => {
+	// clip は祖先が切り取る範囲（ビューポート座標）。切り取る祖先が無い向きは無限遠にする
+	const walk = (element, clip) => {
 		const rect = element.getBoundingClientRect();
+		const style = getComputedStyle(element);
 		if (rect.width > 0 && rect.height > 0) {
 			// 文字の外接矩形を取る範囲を、アイコンのような子要素を含まない、要素自身の文字だけに絞る
 			const textNodes = [...element.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE && node.textContent.trim() !== "");
@@ -30,7 +32,6 @@ export function collectElementBoxes(root) {
 			});
 			// 字の端は、行の箱から斜体やアクセントの分だけはみ出すことがあるので 1px 広げる。
 			// 視覚的に隠した文字（sr-only など）は要素の箱で切り取られて描かれないので、広げたあとに要素の箱で切り取る
-			const style = getComputedStyle(element);
 			const clips = style.overflowX !== "visible" || style.overflowY !== "visible" || style.clip !== "auto" || style.clipPath !== "none";
 			const textBox =
 				textRects.length === 0
@@ -51,8 +52,18 @@ export function collectElementBoxes(root) {
 				["img", "video", "canvas", "iframe", "input", "select", "textarea"].includes(element.tagName.toLowerCase()) ||
 				!isTransparent(style.backgroundColor) ||
 				style.backgroundImage !== "none";
+			// 祖先に切り取られてはみ出した辺の位置に見えるのは、祖先の切り取り線になる。要素の辺として照合すると、要素の位置を確かめないまま
+			// OK に数え、祖先の辺がずれたときは同じずれを要素の辺でも重ねて報告するので、判定しない。
+			// 0.5px の余裕は、小数の位置で祖先の内側に接している要素を、はみ出したと取り違えないため
+			const clipped = {
+				Top: rect.top < clip.top - 0.5,
+				Bottom: rect.bottom > clip.bottom + 0.5,
+				Left: rect.left < clip.left - 0.5,
+				Right: rect.right > clip.right + 0.5,
+			};
 			const paints = (side) =>
-				paintsBox || (parseFloat(style[`border${side}Width`]) > 0 && style[`border${side}Style`] !== "none" && !isTransparent(style[`border${side}Color`]));
+				!clipped[side] &&
+				(paintsBox || (parseFloat(style[`border${side}Width`]) > 0 && style[`border${side}Style`] !== "none" && !isTransparent(style[`border${side}Color`])));
 			elements.push({
 				label: describe(element),
 				...toBox(rect),
@@ -69,9 +80,22 @@ export function collectElementBoxes(root) {
 		}
 		// SVG の中の図形の箱は線幅を含まず、描かれた輪郭と一致しないので、アイコンの中身は画素差分に任せる
 		if (element.tagName.toLowerCase() === "svg") return;
-		for (const child of element.children) walk(child);
+		// overflow は枠の内側（padding box）で、clip-path は枠の外側（border box）で子を切り取る
+		const childClip = { ...clip };
+		const clipsX = style.overflowX !== "visible";
+		const clipsY = style.overflowY !== "visible";
+		const clipsPath = style.clipPath !== "none";
+		if (clipsX || clipsPath) {
+			childClip.left = Math.max(clip.left, rect.left + (clipsX ? parseFloat(style.borderLeftWidth) : 0));
+			childClip.right = Math.min(clip.right, rect.right - (clipsX ? parseFloat(style.borderRightWidth) : 0));
+		}
+		if (clipsY || clipsPath) {
+			childClip.top = Math.max(clip.top, rect.top + (clipsY ? parseFloat(style.borderTopWidth) : 0));
+			childClip.bottom = Math.min(clip.bottom, rect.bottom - (clipsY ? parseFloat(style.borderBottomWidth) : 0));
+		}
+		for (const child of element.children) walk(child, childClip);
 	};
-	walk(root);
+	walk(root, { left: -Infinity, top: -Infinity, right: Infinity, bottom: Infinity });
 	return elements;
 }
 
