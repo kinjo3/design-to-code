@@ -4,15 +4,15 @@ Figma の URL またはデザイン画像を渡すと、Claude Code が対象プ
 
 ## プロジェクトへの導入
 
-1. Claude Code でプラグインを入れる。`design-diff` が使う `playwright` `pixelmatch` `pngjs` は、インストール時に Claude Code がプラグインの中に入れる。
+1. Google Chrome を入れる。`design-diff` は、マシンに入っている Chrome で実装を撮影する。
+
+2. Claude Code でプラグインを入れる。`design-diff` が使う `playwright-core` `pixelmatch` `pngjs` は、インストール時に Claude Code がプラグインの中に入れる。
 
    ```text
    /plugin install design-to-code --marketplace kinjo3/design-to-code
    ```
 
-2. サンドボックス内では Chromium が起動しないため、Claude Code の設定の `sandbox.excludedCommands` に `design-diff *` と `design-diff-install-chromium` を足す。
-
-3. Claude Code に `design-diff-install-chromium` を実行させ、プラグインが依存する版の playwright に合う Chromium を入れる。プラグインのコマンドは、Claude Code が実行するコマンドからだけ PATH に載るので、ターミナルからは実行できない。
+3. サンドボックス内では Chrome が起動しないため、Claude Code の設定の `sandbox.excludedCommands` に `design-diff *` を足す。
 
 4. 差分チェックの出力先 `.design-diff/` を `.gitignore` に足す。
 
