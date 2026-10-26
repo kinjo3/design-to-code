@@ -1,3 +1,5 @@
+import { contentBounds } from "./design-bounds.mjs";
+
 // デザイン画像の入力には Figma のノードの箱が無いので、実装側の要素の辺ごとに、デザイン画像の同じ位置に同じ境界があるかを調べる。
 // design-diff.mjs から使う。画素差分は面積の小さいずれを薄めてしまうので、配置はこちらで判定する
 
@@ -149,22 +151,12 @@ function contrastMap(png, region, isExcluded) {
 	return { max, at: (x, y) => distances[(y - region.top) * width + x - region.left] };
 }
 
-// 文字の要素の箱は行高の余白を含み、辺の両側がどちらも背景になるので、字の外接矩形を辺として使う。
-// 背景との差が最大の半分以上ある画素だけで取るのは design-measure の box と同じで、アンチエイリアスの薄い縁で 1px 膨らむのを避けるため
+// 文字の要素の箱は行高の余白を含み、辺の両側がどちらも背景になるので、字の外接矩形を辺として使う
 function glyphBounds(png, region, isExcluded) {
-	const contrast = contrastMap(png, region, isExcluded);
-	if (contrast.max <= COLOR_TOLERANCE) return null;
-	const bounds = { left: Infinity, top: Infinity, right: -1, bottom: -1, contrast: contrast.max };
-	for (let y = region.top; y < region.bottom; y++) {
-		for (let x = region.left; x < region.right; x++) {
-			if (contrast.at(x, y) < contrast.max / 2) continue;
-			bounds.left = Math.min(bounds.left, x);
-			bounds.top = Math.min(bounds.top, y);
-			bounds.right = Math.max(bounds.right, x + 1);
-			bounds.bottom = Math.max(bounds.bottom, y + 1);
-		}
-	}
-	return bounds;
+	const background = backgroundOf(png, region);
+	const content = contentBounds(region, (x, y) => (isExcluded(x, y) ? null : colorDistance(rgbAt(png, x, y), background)));
+	if (content.max <= COLOR_TOLERANCE) return null;
+	return { ...content.bounds, contrast: content.max };
 }
 
 // 字のある行（列）が続く範囲のうち、実装側の字の範囲と重なるものだけを集める。

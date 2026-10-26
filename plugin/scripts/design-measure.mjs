@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util";
 import { readFileSync } from "node:fs";
 import { PNG } from "pngjs";
+import { boundsWhere, contentBounds } from "./design-bounds.mjs";
 
 const USAGE = `使い方:
   design-measure --image <PNG> --design-width <表示幅> color <x>,<y> [<x>,<y> ...]
@@ -137,51 +138,23 @@ if (command === "color") {
 	if (corners.some((corner) => distance(corner, background) > tolerance)) {
 		console.log("注意: 範囲の四隅の色が揃っていません。左上の画素が背景でない可能性があるので、範囲を中身より一回り大きく取り直してください");
 	}
-	let maxDistance = 0;
-	for (let py = top; py < bottom; py++) {
-		for (let px = left; px < right; px++) maxDistance = Math.max(maxDistance, distance(pixel(px, py), background));
-	}
-	if (maxDistance <= tolerance) {
+	const region = { left, top, right, bottom };
+	const distanceAt = (px, py) => distance(pixel(px, py), background);
+	const content = contentBounds(region, distanceAt);
+	if (content.max <= tolerance) {
 		console.log(`背景 ${hex(background)} と異なる画素はありません`);
 		process.exit(0);
 	}
-	// アンチエイリアスの薄い縁まで含めると寸法が 1px ほど膨らむので、背景との差が最大の半分以上ある画素だけで外接矩形を取る
-	const threshold = maxDistance / 2;
-	let minX = Infinity;
-	let minY = Infinity;
-	let maxX = -1;
-	let maxY = -1;
-	let contentColor = null;
-	let fringeMinX = Infinity;
-	let fringeMinY = Infinity;
-	let fringeMaxX = -1;
-	let fringeMaxY = -1;
-	for (let py = top; py < bottom; py++) {
-		for (let px = left; px < right; px++) {
-			const color = pixel(px, py);
-			const d = distance(color, background);
-			if (d > tolerance) {
-				fringeMinX = Math.min(fringeMinX, px);
-				fringeMinY = Math.min(fringeMinY, py);
-				fringeMaxX = Math.max(fringeMaxX, px);
-				fringeMaxY = Math.max(fringeMaxY, py);
-			}
-			if (d < threshold) continue;
-			minX = Math.min(minX, px);
-			minY = Math.min(minY, py);
-			maxX = Math.max(maxX, px);
-			maxY = Math.max(maxY, py);
-			if (!contentColor || d > distance(contentColor, background)) contentColor = color;
-		}
-	}
-	console.log(`背景 ${hex(background)}、中身の色 ${hex(contentColor)}`);
+	const { bounds } = content;
+	console.log(`背景 ${hex(background)}、中身の色 ${hex(pixel(content.maxAt.x, content.maxAt.y))}`);
 	console.log(
-		`中身の外接矩形: x=${toCssPx(minX)} y=${toCssPx(minY)} 幅=${toCssPx(maxX + 1 - minX)} 高さ=${toCssPx(maxY + 1 - minY)}`,
+		`中身の外接矩形: x=${toCssPx(bounds.left)} y=${toCssPx(bounds.top)} 幅=${toCssPx(bounds.right - bounds.left)} 高さ=${toCssPx(bounds.bottom - bounds.top)}`,
 	);
 	// 丸い字の上下へのはみ出しは薄い縁になる。2 つの高さの差が、1 字の高さから文字サイズを見積もるときの誤差の目安になる
-	if (fringeMinX < minX || fringeMinY < minY || fringeMaxX > maxX || fringeMaxY > maxY) {
+	const fringe = boundsWhere(region, (px, py) => distanceAt(px, py) > tolerance);
+	if (fringe.left < bounds.left || fringe.top < bounds.top || fringe.right > bounds.right || fringe.bottom > bounds.bottom) {
 		console.log(
-			`薄い縁まで含めた外接矩形: x=${toCssPx(fringeMinX)} y=${toCssPx(fringeMinY)} 幅=${toCssPx(fringeMaxX + 1 - fringeMinX)} 高さ=${toCssPx(fringeMaxY + 1 - fringeMinY)}`,
+			`薄い縁まで含めた外接矩形: x=${toCssPx(fringe.left)} y=${toCssPx(fringe.top)} 幅=${toCssPx(fringe.right - fringe.left)} 高さ=${toCssPx(fringe.bottom - fringe.top)}`,
 		);
 	}
 } else {
