@@ -7,7 +7,7 @@ import pixelmatch from "pixelmatch";
 import { PNG } from "pngjs";
 import { collectElementBoxes, compareEdges, formatEdgeReport } from "./design-edges.mjs";
 import { collectDomBoxes, compareLayout, formatLayoutReport, parseMetadata } from "./design-layout.mjs";
-import { runLogPath, targetLabel, workingTreeHash } from "./design-target.mjs";
+import { MAX_ADJUSTMENTS, adjustmentLimitReached, runLogPath, targetLabel, workingTreeHash } from "./design-target.mjs";
 
 const { values } = parseArgs({
 	options: {
@@ -91,6 +91,17 @@ if (values.texts) {
 }
 
 const label = targetLabel({ selector, width, designWidth: values["design-width"], out: values.out });
+
+// 上限を SKILL.md の文章で指示するだけでは、モデルによっては上限を超えて調整を続ける。
+// 計測そのものを断り、ビルドと撮影の前に止める
+if (adjustmentLimitReached(process.cwd(), label)) {
+	fail(
+		[
+			`調整が上限（${MAX_ADJUSTMENTS} 回）に達したので、差分を測りませんでした: ${label}`,
+			"これ以上調整せずに打ち切ってください。SKILL.md の Step 5 項目 7 に沿って、差分画像一式と各回のずれの件数・diffRatio の推移を Step 7 の報告に含め、ユーザーの判断を仰いでください。",
+		].join("\n"),
+	);
+}
 
 // スクリプトの置き場所に依存しないよう、出力先は実行時のカレントディレクトリ（プロジェクトルート）を基準にする
 const outDir = join(process.cwd(), ".design-diff", label);
