@@ -23,7 +23,7 @@ Figma の URL またはデザイン画像を渡すと、Claude Code が対象プ
 開発サーバーを起動した状態で、Claude Code に Figma の URL かデザイン画像（PNG）を渡して依頼する。デザイン画像の渡し方は、クリップボードからのコピーアンドペーストでも可能。
 
 ```text
-/design-to-code https://www.figma.com/design/<file>?node-id=1-2 を実装して
+https://www.figma.com/design/<file>?node-id=1-2 を実装して
 ```
 
 ```text
