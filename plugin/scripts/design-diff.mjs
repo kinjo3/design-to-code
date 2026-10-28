@@ -98,7 +98,7 @@ if (adjustmentLimitReached(process.cwd(), label)) {
 	fail(
 		[
 			`調整が上限（${MAX_ADJUSTMENTS} 回）に達したので、差分を測りませんでした: ${label}`,
-			"これ以上調整せずに打ち切ってください。SKILL.md の Step 5 項目 7 に沿って、差分画像一式と各回のずれの件数・diffRatio の推移を Step 7 の報告に含め、ユーザーの判断を仰いでください。",
+			"これ以上調整せずに、SKILL.md の Step 5 項目 7 に沿って、差分画像一式と各回のずれの件数・diffRatio の推移を添え、続けるかを AskUserQuestion を使わずに文章で聞いてターンを終えてください。ユーザーが返信すると、上限の回数は 0 から数え直しになります。",
 		].join("\n"),
 	);
 }
