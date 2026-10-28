@@ -20,14 +20,14 @@ Figma の URL またはデザイン画像を渡すと、Claude Code が対象プ
 
 ## 使い方
 
-開発サーバーを起動した状態で、Claude Code に Figma の URL かデザイン画像（PNG）を渡して依頼する。画像の表示幅など、実装に要る値が依頼に書かれていなければ、Claude Code が聞く。
+開発サーバーを起動した状態で、Claude Code に Figma の URL かデザイン画像（PNG）を渡して依頼する。デザイン画像の渡し方は、クリップボードからのコピーアンドペーストでも可能。
 
 ```text
 /design-to-code https://www.figma.com/design/<file>?node-id=1-2 を実装して
 ```
 
 ```text
-/design-to-code design/hero.png を実装して
+design/hero.png を実装して
 ```
 
 合格の条件、差分チェックの出力、Claude Code が差分チェックを終えるまで終了しない仕組みは [docs/diff-check.md](docs/diff-check.md) を参照。
