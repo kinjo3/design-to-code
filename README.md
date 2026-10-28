@@ -32,11 +32,3 @@ Figma の URL またはデザイン画像を渡すと、Claude Code が対象プ
 
 合格の条件、差分チェックの出力、Claude Code が差分チェックを終えるまで終了しない仕組みは [docs/diff-check.md](docs/diff-check.md) を参照。
 
-## 開発
-
-変更したプラグインを試すときは、`plugin/` に依存を入れてから、Claude Code を `--plugin-dir` 付きで起動する。`--plugin-dir` で読み込んだプラグインには、Claude Code が依存を入れない。
-
-```sh
-npm install --prefix plugin
-claude --plugin-dir ./plugin
-```
