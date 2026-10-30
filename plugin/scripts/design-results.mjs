@@ -75,8 +75,14 @@ function readRegularFile(name) {
 // 既存のファイルに書き込むとリンク先を書き換えるので、新しく作ったファイルで置き換える。rename はリンクをたどらずに置き換える
 function replaceFile(name, data) {
 	const temp = `.${name}.${randomUUID()}.tmp`;
-	writeFileSync(temp, data, { flag: "wx" });
+	// wx で作れなかったときは、同じ名前の別のファイルが既にある。それを消さないよう、作る処理は try の外に置く
+	const fd = openSync(temp, "wx");
 	try {
+		try {
+			writeFileSync(fd, data);
+		} finally {
+			closeSync(fd);
+		}
 		renameSync(temp, name);
 	} catch (error) {
 		unlinkSync(temp);

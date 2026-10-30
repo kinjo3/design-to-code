@@ -133,5 +133,6 @@ describe("ファイルがリンクなら、リンク先を読み書きしない"
 	test("読み込み先がシンボリックリンク", () => {
 		symlinkSync(secret, join(labelDir("sessions"), "s1.json"));
 		assert.throws(() => readResultsFile(project, ["sessions"], "s1.json"), UnsafeResultsPathError);
+		assertOutsideUntouched();
 	});
 });

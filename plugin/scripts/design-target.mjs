@@ -155,14 +155,25 @@ function stopHook() {
 	const input = JSON.parse(readFileSync(0, "utf8"));
 	let projectDir;
 	let session;
+	let unsafeError;
 	for (const dir of [input.cwd, process.env.CLAUDE_PROJECT_DIR].filter(Boolean)) {
-		session = readSession(dir, input.session_id);
+		// 片方の .design-diff がリンクでも、もう片方に登録があれば完走を確かめられるので、どちらでも読めないときだけ失敗にする
+		try {
+			session = readSession(dir, input.session_id);
+		} catch (error) {
+			if (!(error instanceof UnsafeResultsPathError)) throw error;
+			unsafeError ??= error;
+			continue;
+		}
 		if (session) {
 			projectDir = dir;
 			break;
 		}
 	}
-	if (!projectDir) return;
+	if (!projectDir) {
+		if (unsafeError) throw unsafeError;
+		return;
+	}
 	const treeHash = workingTreeHash(projectDir);
 	const pending = session.targets
 		.map((target) => ({ target, ...judge(projectDir, target, treeHash) }))
