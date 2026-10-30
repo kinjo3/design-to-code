@@ -8,6 +8,7 @@ import { collectElementBoxes, compareEdges, formatEdgeReport } from "./design-ed
 import { collectDomBoxes, compareLayout, formatLayoutReport, parseMetadata } from "./design-layout.mjs";
 import { appendResultsFile, UnsafeResultsPathError, writeResultsFiles } from "./design-results.mjs";
 import { RUN_LOG_FILE, targetLabel, workingTreeHash } from "./design-target.mjs";
+import { isLocalDevServerUrl } from "./design-url.mjs";
 
 const { values } = parseArgs({
 	options: {
@@ -62,19 +63,6 @@ for (const [name, min] of [
 }
 
 const url = values.url;
-// サンドボックスの外で開けるのを開発サーバーに限り、file: や外部の URL から読み込んだ内容を撮影させない。
-// 先頭一致で判定すると、http://localhost@example.com のようにユーザー情報の位置に localhost を書いた URL を通してしまう
-const LOCAL_HOSTNAMES = ["localhost", "127.0.0.1", "[::1]"];
-function isLocalDevServerUrl(value) {
-	let parsed;
-	try {
-		parsed = new URL(value);
-	} catch {
-		return false;
-	}
-	if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-	return LOCAL_HOSTNAMES.includes(parsed.hostname) || parsed.hostname.endsWith(".localhost");
-}
 if (!isLocalDevServerUrl(url)) {
 	fail(`--url には、ホスト名が localhost・127.0.0.1・[::1]・*.localhost の http: か https: の URL を指定してください（渡された値: "${url}"）`);
 }
