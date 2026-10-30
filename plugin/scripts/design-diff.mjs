@@ -105,7 +105,6 @@ if (values.texts) {
 	try {
 		nodeTexts = JSON.parse(textsSource);
 	} catch {
-		// JSON.parse のエラー文はファイルの先頭を含む。design-diff はサンドボックスの外で読むので、読むのを禁じたファイルの中身を出さない
 		fail(`--texts のファイルを JSON として読めませんでした: ${values.texts}`);
 	}
 }
