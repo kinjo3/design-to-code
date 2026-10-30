@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { readResultsFile, UnsafeResultsPathError, writeResultsFiles } from "./design-results.mjs";
 
-// Stop hook の登録を置くディレクトリ。計測の出力先と同じ .design-diff の下にあるので、ラベルに使わせない
+// Stop hook の登録を置くディレクトリ。計測の出力先と同じ .design-diff の下にあり、ラベルに使うと登録と計測の結果が同じディレクトリに混ざる。
+// ファイル名は重ならないので動きは壊れないが、どれが登録かを見分けにくくなるので、ラベルには使わせない
 const SESSIONS_DIR = "sessions";
 
 // #10 で設定できるようにするまでは、SKILL.md Step 5 項目 7 の「調整は最大 3 回」と同じ値を持つ
