@@ -67,10 +67,12 @@ Figma のデザインを、対象プロジェクトの規約に沿ってコー�
 
 - `get_design_context` — レイアウト構造・寸法・色・タイポグラフィの仕様として読む。**返ってくるコード例は特定のフレームワーク向けなので、そのまま貼らない。** 対象プロジェクトのトークンと書き方（Step 3 の対応表と規約）に置き換える。
 - `get_screenshot` — 実装時に見比べる見本。スクラッチパッド（`$TMPDIR`）に保存する。
-- `get_metadata` — Step 5 の箱の比較に使う。出力の XML をそのままスクラッチパッドに保存する。`instance` ノードの内部は返らないので、対象に含まれる `instance` ごとに `get_metadata` をその id で呼び、出力を別ファイルに保存する（足りないインスタンスは `design-diff` が警告する）。
-- 文字の対応表 — `get_design_context` の結果から、文字を持つ要素の `data-node-id` と文字列を `{"<node id>": "<文字列>"}` の JSON にしてスクラッチパッドに保存する。インスタンス内の文字は、コンポーネント呼び出しのプロパティ（`label="…"` など）で渡されるので、インスタンスの `get_metadata` に出る text ノードの id（`I<インスタンス id>;<内部 id>`）に結び付ける。
+- `get_metadata` — Step 5 の箱の比較に使う。出力の XML をそのまま、プロジェクトルートの `.design-diff/inputs/${CLAUDE_SESSION_ID}/`（以下、入力の置き場所）に保存する。`instance` ノードの内部は返らないので、対象に含まれる `instance` ごとに `get_metadata` をその id で呼び、出力を別ファイルに保存する（足りないインスタンスは `design-diff` が警告する）。
+- 文字の対応表 — `get_design_context` の結果から、文字を持つ要素の `data-node-id` と文字列を `{"<node id>": "<文字列>"}` の JSON にして入力の置き場所に保存する。インスタンス内の文字は、コンポーネント呼び出しのプロパティ（`label="…"` など）で渡されるので、インスタンスの `get_metadata` に出る text ノードの id（`I<インスタンス id>;<内部 id>`）に結び付ける。
 - `get_variable_defs` — Step 3 の対応表の元データ。
 - 画像・アイコンがあれば `download_assets`。
+
+`design-diff` は、`--metadata` `--texts` で渡されたファイルのうち、`.design-diff/inputs/` の下にあるものしか読まない。入力の置き場所に保存するファイルの名前には英数字・`-`・`_`・`.` だけを使う。ファイル名に node id を入れるときは、`:` と `;` を `-` に置き換える。
 
 ### デザイン画像の場合
 
