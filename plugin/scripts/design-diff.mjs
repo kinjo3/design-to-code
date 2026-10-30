@@ -6,6 +6,7 @@ import pixelmatch from "pixelmatch";
 import { PNG } from "pngjs";
 import { collectElementBoxes, compareEdges, formatEdgeReport } from "./design-edges.mjs";
 import { collectDomBoxes, compareLayout, formatLayoutReport, parseMetadata } from "./design-layout.mjs";
+import { isAllowedHost, isValidAllowDomain, PROXY_BYPASS, startBlockingProxy } from "./design-network.mjs";
 import { appendResultsFile, UnsafeResultsPathError, writeResultsFiles } from "./design-results.mjs";
 import { RUN_LOG_FILE, targetLabel, workingTreeHash } from "./design-target.mjs";
 import { isLocalDevServerUrl } from "./design-url.mjs";
@@ -27,6 +28,7 @@ const { values } = parseArgs({
 		texts: { type: "string" },
 		"layout-tolerance": { type: "string", default: "1" },
 		build: { type: "string" },
+		"allow-domain": { type: "string", multiple: true },
 	},
 });
 
@@ -65,6 +67,11 @@ for (const [name, min] of [
 const url = values.url;
 if (!isLocalDevServerUrl(url)) {
 	fail(`--url には、ホスト名が localhost・127.0.0.1・[::1]・*.localhost の http: か https: の URL を指定してください（渡された値: "${url}"）`);
+}
+const allowDomains = (values["allow-domain"] ?? []).map((domain) => domain.toLowerCase());
+const invalidDomain = allowDomains.find((domain) => !isValidAllowDomain(domain));
+if (invalidDomain !== undefined) {
+	fail(`--allow-domain には、スキーム・ポート・ワイルドカードを付けないホスト名を指定してください（渡された値: "${invalidDomain}"）`);
 }
 const selector = values.selector;
 const designPath = values.design;
@@ -169,11 +176,29 @@ function cropToPaintedBox(png, rect) {
 	return cropped;
 }
 
-async function captureActual() {
+// 代理サーバーにはページの通信だけでなく Chrome 自身の更新確認なども届くので、止めた宛先はページの要求から拾う
+const blockedRequests = [];
+
+function isBlockedUrl(value) {
+	let parsed;
+	try {
+		parsed = new URL(value);
+	} catch {
+		return false;
+	}
+	return ["http:", "https:", "ws:", "wss:"].includes(parsed.protocol) && !isAllowedHost(parsed.hostname, allowDomains);
+}
+
+async function captureActual(proxy) {
 	let browser;
 	try {
 		// playwright が版を固定して配る Chromium ではなく自動更新される Chrome を使い、ブラウザの脆弱性の修正をプラグインの更新から切り離す
-		browser = await chromium.launch({ channel: "chrome" });
+		browser = await chromium.launch({
+			channel: "chrome",
+			proxy: { server: proxy.server, bypass: PROXY_BYPASS },
+			// WebRTC の UDP は代理サーバーを通らずに外へ出られる
+			args: ["--webrtc-ip-handling-policy=disable_non_proxied_udp"],
+		});
 	} catch (error) {
 		throw new CaptureError(
 			`Chrome を起動できません。Google Chrome がインストールされているか、サンドボックス内で実行していないか確認してください。\n${errorText(error)}`,
@@ -182,14 +207,44 @@ async function captureActual() {
 	try {
 		// 撮影ごとに新しいコンテキストで開くとオープニングなどの演出が毎回再生されるので、完成形を撮らせる
 		const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor, reducedMotion: "reduce" });
-		const page = await context.newPage();
+		let page;
+		let blockedNavigation = null;
+		// WebSocket の接続は requestfailed に出ない
+		context.on("page", (openedPage) =>
+			openedPage.on("websocket", (webSocket) => {
+				if (isBlockedUrl(webSocket.url())) blockedRequests.push({ url: webSocket.url(), resourceType: "websocket" });
+			}),
+		);
+		context.on("requestfailed", (request) => {
+			if (!isBlockedUrl(request.url())) return;
+			blockedRequests.push({ url: request.url(), resourceType: request.resourceType() });
+			if (!request.isNavigationRequest()) return;
+			// Service Worker の要求には frame が無く、frame() が例外を投げる
+			let frame;
+			try {
+				frame = request.frame();
+			} catch {
+				return;
+			}
+			if (frame === page?.mainFrame()) blockedNavigation ??= request.url();
+		});
+		// 止めた先へ移ったページは Chrome のエラー画面になるので、撮影できたとしても実装の描画ではない
+		const throwIfNavigationBlocked = () => {
+			if (blockedNavigation === null) return;
+			throw new CaptureError(
+				`ページが外部の宛先へ移ろうとしたので止め、撮影せずに終えました: ${blockedNavigation}\n開発サーバーのリダイレクトや、location を書き換えるスクリプトを確かめてください。`,
+			);
+		};
+		page = await context.newPage();
 		try {
 			await page.goto(url, { waitUntil: "networkidle" });
 		} catch (error) {
+			throwIfNavigationBlocked();
 			throw new CaptureError(
 				`ページの読み込みに失敗しました: ${url}\n開発サーバーが起動しているか、--url の値が正しいか確認してください。\n${errorText(error)}`,
 			);
 		}
+		throwIfNavigationBlocked();
 		// ヘッドレスの Chromium はスクロールバーを幅 0 で隠すが、scrollbar-gutter: stable はその幅を確保し続けるので、
 		// 見本画像には無い空白の帯が右端に写る
 		await page.addStyleTag({ content: ":root { scrollbar-gutter: auto !important; }" });
@@ -198,6 +253,7 @@ async function captureActual() {
 		try {
 			await locator.waitFor({ state: "visible", timeout: 10_000 });
 		} catch (error) {
+			throwIfNavigationBlocked();
 			if (error instanceof Error && error.name === "TimeoutError") {
 				throw new CaptureError(
 					`要素が見つかりませんでした: ${selector}\nセレクタが正しいか、変更が描画先に反映されている（ビルドが必要なプロジェクトならビルド済み）か確認してください。`,
@@ -242,7 +298,9 @@ async function captureActual() {
 		const domBoxes = figmaNodes ? await locator.evaluate(collectDomBoxes) : null;
 		// Figma のノードが無い実行では、突き合わせる箱がデザイン側に無いので、実装側の要素の辺をデザイン画像の中で探す
 		const elementBoxes = figmaNodes ? null : await locator.evaluate(collectElementBoxes);
-		return { buffer: await locator.screenshot(), rect, domBoxes, elementBoxes, excludeBoxes };
+		const buffer = await locator.screenshot();
+		throwIfNavigationBlocked();
+		return { buffer, rect, domBoxes, elementBoxes, excludeBoxes };
 	} finally {
 		await browser.close();
 	}
@@ -253,12 +311,24 @@ let targetRect;
 let domBoxes;
 let elementBoxes;
 let excludeBoxes;
+const proxy = await startBlockingProxy(allowDomains);
 try {
-	({ buffer: actualBuffer, rect: targetRect, domBoxes, elementBoxes, excludeBoxes } = await captureActual());
+	({ buffer: actualBuffer, rect: targetRect, domBoxes, elementBoxes, excludeBoxes } = await captureActual(proxy));
 } catch (error) {
 	if (error instanceof CaptureError) fail(error.message);
 	throw error;
+} finally {
+	await proxy.close();
 }
+
+const blockedHosts = new Map();
+for (const { url: blockedUrl, resourceType } of blockedRequests) {
+	const host = new URL(blockedUrl).hostname;
+	const types = blockedHosts.get(host) ?? {};
+	types[resourceType] = (types[resourceType] ?? 0) + 1;
+	blockedHosts.set(host, types);
+}
+const blockedHostReports = [...blockedHosts].map(([host, resourceTypes]) => ({ host, resourceTypes }));
 
 const screenshotPng = PNG.sync.read(actualBuffer);
 const actualPng = cropToPaintedBox(screenshotPng, targetRect);
@@ -489,6 +559,7 @@ const summary = {
 	totalPixels,
 	excludedPixels,
 	excludedCssPx: excludedReports,
+	blockedHosts: blockedHostReports,
 	diffClustersCssPx: clusterReports,
 	designSize: { width: designPng.width, height: designPng.height },
 	actualSize: { width: actualPng.width, height: actualPng.height },
@@ -496,7 +567,7 @@ const summary = {
 	targetRectCssPx: targetRect,
 	deviceScaleFactor,
 	diffRatioThreshold,
-	args: { url, selector, designPath, width, designWidth, height, wait, exclude: excludeSelectors },
+	args: { url, selector, designPath, width, designWidth, height, wait, exclude: excludeSelectors, allowDomains },
 	timestamp: new Date().toISOString(),
 };
 const outputFiles = {
@@ -547,6 +618,12 @@ console.log(
 if (excludedPixels > 0) {
 	const excludedCount = excludedReports.reduce((sum, report) => sum + report.rectsCssPx.length, 0);
 	console.log(`比較から外した範囲: ${excludedCount} 件（${excludedPixels} 画素、diffRatio の分母から除く。diff.png では青で塗る）`);
+}
+if (blockedHostReports.length > 0) {
+	console.log("外部への通信を止めた宛先（--allow-domain に無いホスト。資源の種類と件数）:");
+	for (const { host, resourceTypes } of blockedHostReports) {
+		console.log(`  ${host}: ${Object.entries(resourceTypes).map(([type, count]) => `${type} ${count} 件`).join(", ")}`);
+	}
 }
 if (!pixelPass) {
 	if (clusterReports.length > 0) {
