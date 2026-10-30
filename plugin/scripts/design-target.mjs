@@ -1,9 +1,13 @@
 import { parseArgs } from "node:util";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { readResultsFile, UnsafeResultsPathError, writeResultsFiles } from "./design-results.mjs";
+
+// Stop hook の登録を置くディレクトリ。計測の出力先と同じ .design-diff の下にあるので、ラベルに使わせない
+const SESSIONS_DIR = "sessions";
 
 // #10 で設定できるようにするまでは、SKILL.md Step 5 項目 7 の「調整は最大 3 回」と同じ値を持つ
 const MAX_ADJUSTMENTS = 3;
@@ -15,6 +19,7 @@ export function targetLabel({ selector, width, designWidth, out }) {
 		if (!/^[A-Za-z0-9_-]+$/.test(out)) {
 			throw new Error(`--out には英数字・-・_ だけの名前を指定してください（渡された値: "${out}"）`);
 		}
+		if (out === SESSIONS_DIR) throw new Error(`--out に "${SESSIONS_DIR}" は使えません。Stop hook の登録の置き場所と重なります`);
 		return out;
 	}
 	// 同じセレクタ・同じビューポートで書き出し幅だけ変えた実行が上書きし合わないよう、指定時は幅を重ねる
@@ -22,9 +27,7 @@ export function targetLabel({ selector, width, designWidth, out }) {
 	return `${selector.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "")}-${Number(width)}${designWidthLabel}`;
 }
 
-export function runLogPath(projectDir, label) {
-	return join(projectDir, ".design-diff", label, "runs.jsonl");
-}
+export const RUN_LOG_FILE = "runs.jsonl";
 
 function git(cwd, args) {
 	return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
@@ -72,16 +75,19 @@ export function workingTreeHash(cwd) {
 }
 
 function readRuns(projectDir, label) {
-	const path = runLogPath(projectDir, label);
-	if (!existsSync(path)) return [];
-	return readFileSync(path, "utf8")
+	return (readResultsFile(projectDir, [label], RUN_LOG_FILE) ?? "")
 		.split("\n")
 		.filter(Boolean)
 		.map((line) => JSON.parse(line));
 }
 
-function sessionPath(projectDir, sessionId) {
-	return join(projectDir, ".design-diff", "sessions", `${sessionId}.json`);
+function readSession(projectDir, sessionId) {
+	const text = readResultsFile(projectDir, [SESSIONS_DIR], `${sessionId}.json`);
+	return text === null ? null : JSON.parse(text);
+}
+
+function writeSession(projectDir, sessionId, session) {
+	writeResultsFiles(projectDir, [SESSIONS_DIR], { [`${sessionId}.json`]: JSON.stringify(session, null, 2) });
 }
 
 function fail(message) {
@@ -107,8 +113,7 @@ function register(argv) {
 		fail(`--session がセッション ID になっていません（渡された値: "${values.session}"）。差分チェックの完走は Stop hook で確かめられません。`);
 	}
 	const projectDir = process.cwd();
-	const path = sessionPath(projectDir, values.session);
-	const session = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : { targets: [] };
+	const session = readSession(projectDir, values.session) ?? { targets: [] };
 	let label;
 	try {
 		label = targetLabel({ selector: values.selector, width: values.width, designWidth: values["design-width"], out: values.out });
@@ -119,8 +124,7 @@ function register(argv) {
 	if (!session.targets.some((target) => target.label === label)) {
 		session.targets.push({ label, selector: values.selector, width: Number(values.width), registeredAt: new Date().toISOString() });
 	}
-	mkdirSync(join(projectDir, ".design-diff", "sessions"), { recursive: true });
-	writeFileSync(path, JSON.stringify(session, null, 2));
+	writeSession(projectDir, values.session, session);
 	console.log(`登録済み: ${label}`);
 }
 
@@ -148,12 +152,16 @@ function judge(projectDir, target, treeHash) {
 
 function stopHook() {
 	const input = JSON.parse(readFileSync(0, "utf8"));
-	const projectDir = [input.cwd, process.env.CLAUDE_PROJECT_DIR].find(
-		(dir) => dir && existsSync(sessionPath(dir, input.session_id)),
-	);
+	let projectDir;
+	let session;
+	for (const dir of [input.cwd, process.env.CLAUDE_PROJECT_DIR].filter(Boolean)) {
+		session = readSession(dir, input.session_id);
+		if (session) {
+			projectDir = dir;
+			break;
+		}
+	}
 	if (!projectDir) return;
-	const path = sessionPath(projectDir, input.session_id);
-	const session = JSON.parse(readFileSync(path, "utf8"));
 	const treeHash = workingTreeHash(projectDir);
 	const pending = session.targets
 		.map((target) => ({ target, ...judge(projectDir, target, treeHash) }))
@@ -164,7 +172,7 @@ function stopHook() {
 	// 前回止めたときから実行記録も作業ツリーも変わっていなければ、同じ理由では止めない
 	const state = JSON.stringify([treeHash, ...session.targets.map((target) => readRuns(projectDir, target.label).length)]);
 	if (session.lastBlockedState === state) return;
-	writeFileSync(path, JSON.stringify({ ...session, lastBlockedState: state }, null, 2));
+	writeSession(projectDir, input.session_id, { ...session, lastBlockedState: state });
 
 	const lines = pending.map(({ target, reason }) => `- ${target.label}: ${reason}`);
 	const reason = [
@@ -178,7 +186,13 @@ function stopHook() {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
 	const [command, ...argv] = process.argv.slice(2);
-	if (command === "register") register(argv);
-	else if (command === "stop-hook") stopHook();
-	else fail("使い方: design-target register --session <ID> --selector <セレクタ> --width <幅> [--design-width <幅>] [--out <名前>]");
+	try {
+		if (command === "register") register(argv);
+		else if (command === "stop-hook") stopHook();
+		else fail("使い方: design-target register --session <ID> --selector <セレクタ> --width <幅> [--design-width <幅>] [--out <名前>]");
+	} catch (error) {
+		if (!(error instanceof UnsafeResultsPathError)) throw error;
+		// Stop hook で止めると、登録を書き戻せずに同じ理由で止め続けるので、ユーザーに見える失敗として終える
+		fail(`.design-diff の中を読み書きせずに終えました: ${error.message}`);
+	}
 }

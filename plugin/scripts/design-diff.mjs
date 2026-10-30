@@ -1,12 +1,13 @@
 import { parseArgs } from "node:util";
-import { appendFileSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import pixelmatch from "pixelmatch";
 import { PNG } from "pngjs";
 import { collectElementBoxes, compareEdges, formatEdgeReport } from "./design-edges.mjs";
 import { collectDomBoxes, compareLayout, formatLayoutReport, parseMetadata } from "./design-layout.mjs";
-import { runLogPath, targetLabel, workingTreeHash } from "./design-target.mjs";
+import { appendResultsFile, UnsafeResultsPathError, writeResultsFiles } from "./design-results.mjs";
+import { RUN_LOG_FILE, targetLabel, workingTreeHash } from "./design-target.mjs";
 
 const { values } = parseArgs({
 	options: {
@@ -104,10 +105,17 @@ if (values.metadata) {
 }
 let nodeTexts = {};
 if (values.texts) {
+	let textsSource;
 	try {
-		nodeTexts = JSON.parse(readFileSync(values.texts, "utf8"));
+		textsSource = readFileSync(values.texts, "utf8");
 	} catch (error) {
-		fail(`--texts の JSON を読めませんでした: ${values.texts}\n${error instanceof Error ? error.message : String(error)}`);
+		fail(`--texts のファイルを読めませんでした: ${values.texts}\n${error instanceof Error ? error.message : String(error)}`);
+	}
+	try {
+		nodeTexts = JSON.parse(textsSource);
+	} catch {
+		// JSON.parse のエラー文はファイルの先頭を含む。design-diff はサンドボックスの外で読むので、読むのを禁じたファイルの中身を出さない
+		fail(`--texts のファイルを JSON として読めませんでした: ${values.texts}`);
 	}
 }
 
@@ -119,25 +127,7 @@ try {
 }
 
 // スクリプトの置き場所に依存しないよう、出力先は実行時のカレントディレクトリ（プロジェクトルート）を基準にする
-const resultsDir = join(process.cwd(), ".design-diff");
-const outDir = join(resultsDir, label);
-
-// design-diff はサンドボックスの外で動くので、サンドボックスの中から作ったシンボリックリンクをたどって書き出すと、
-// サンドボックスが書き込みを禁じている場所に書けてしまう
-function failIfSymlink(paths) {
-	for (const path of paths) {
-		let stats;
-		try {
-			stats = lstatSync(path);
-		} catch (error) {
-			if (error.code === "ENOENT") continue;
-			throw error;
-		}
-		if (stats.isSymbolicLink()) fail(`出力先がシンボリックリンクなので、何も書き出さずに終えました: ${path}`);
-	}
-}
-failIfSymlink([resultsDir, outDir]);
-mkdirSync(outDir, { recursive: true });
+const projectDir = process.cwd();
 
 let designPng;
 try {
@@ -147,7 +137,7 @@ try {
 }
 const deviceScaleFactor = designPng.width / designWidth;
 
-const treeHash = workingTreeHash(process.cwd());
+const treeHash = workingTreeHash(projectDir);
 
 // 原因の見当がつく撮影の失敗は案内文だけを出し、それ以外の例外はスタックトレースごと表に出す
 class CaptureError extends Error {}
@@ -490,15 +480,6 @@ const diffPane = downscale(diffPng, compareScale);
 if (compareScale < 1) markDiffRed(diffPng, diffPane, compareScale);
 const comparePng = compositeRow([downscale(designCanvas, compareScale), downscale(actualCanvas, compareScale), diffPane]);
 
-const outputFiles = ["design.png", "actual.png", "diff.png", "compare.png", "summary.json", "layout.json", "edges.json"];
-// 撮影の間にサンドボックスの中からリンクに差し替えられても、書き出す直前に気付けるよう確かめ直す
-failIfSymlink([resultsDir, outDir, ...outputFiles.map((file) => join(outDir, file)), runLogPath(process.cwd(), label)]);
-
-writeFileSync(join(outDir, "design.png"), PNG.sync.write(designCanvas));
-writeFileSync(join(outDir, "actual.png"), PNG.sync.write(actualCanvas));
-writeFileSync(join(outDir, "diff.png"), PNG.sync.write(diffPng));
-writeFileSync(join(outDir, "compare.png"), PNG.sync.write(comparePng));
-
 const summary = {
 	pass,
 	pixelPass,
@@ -530,29 +511,45 @@ const summary = {
 	args: { url, selector, designPath, width, designWidth, height, wait, exclude: excludeSelectors },
 	timestamp: new Date().toISOString(),
 };
-writeFileSync(join(outDir, "summary.json"), JSON.stringify(summary, null, 2));
-// summary.json は毎回上書きされるので、Stop hook が試行回数と計測後の変更の有無を確かめられるよう、実行ごとに 1 行残す。
-// 箱や辺だけで不合格になると diffRatio は閾値内に収まっているので、どの判定で落ちたかを Stop hook の理由に出せるよう件数も残す
-appendFileSync(
-	runLogPath(process.cwd(), label),
-	`${JSON.stringify({
-		at: summary.timestamp,
-		pass,
-		pixelPass,
-		diffRatio,
-		layoutMismatched: summary.layout?.mismatched ?? null,
-		edgeMismatched: summary.edges?.mismatched ?? null,
-		treeHash,
-	})}\n`,
-);
+const outputFiles = {
+	"design.png": PNG.sync.write(designCanvas),
+	"actual.png": PNG.sync.write(actualCanvas),
+	"diff.png": PNG.sync.write(diffPng),
+	"compare.png": PNG.sync.write(comparePng),
+	"summary.json": JSON.stringify(summary, null, 2),
+};
+if (layoutResults) {
+	outputFiles["layout.json"] = JSON.stringify({ tolerance: layoutTolerance, warnings: metadataWarnings, results: layoutResults }, null, 2);
+}
+if (edgeResults) outputFiles["edges.json"] = JSON.stringify({ tolerance: layoutTolerance, results: edgeResults }, null, 2);
+try {
+	writeResultsFiles(projectDir, [label], outputFiles);
+	// summary.json は毎回上書きされるので、Stop hook が試行回数と計測後の変更の有無を確かめられるよう、実行ごとに 1 行残す。
+	// 箱や辺だけで不合格になると diffRatio は閾値内に収まっているので、どの判定で落ちたかを Stop hook の理由に出せるよう件数も残す
+	appendResultsFile(
+		projectDir,
+		[label],
+		RUN_LOG_FILE,
+		`${JSON.stringify({
+			at: summary.timestamp,
+			pass,
+			pixelPass,
+			diffRatio,
+			layoutMismatched: summary.layout?.mismatched ?? null,
+			edgeMismatched: summary.edges?.mismatched ?? null,
+			treeHash,
+		})}\n`,
+	);
+} catch (error) {
+	if (!(error instanceof UnsafeResultsPathError)) throw error;
+	fail(`.design-diff の中を読み書きせずに終えました: ${error.message}`);
+}
 
 if (layoutResults) {
-	writeFileSync(join(outDir, "layout.json"), JSON.stringify({ tolerance: layoutTolerance, warnings: metadataWarnings, results: layoutResults }, null, 2));
 	for (const warning of metadataWarnings) console.log(`警告: ${warning}`);
 	console.log(formatLayoutReport(layoutResults, layoutTolerance));
 }
 if (edgeResults) {
-	writeFileSync(join(outDir, "edges.json"), JSON.stringify({ tolerance: layoutTolerance, results: edgeResults }, null, 2));
 	console.log(formatEdgeReport(edgeResults, layoutTolerance));
 }
 
@@ -578,6 +575,6 @@ if (!pixelPass) {
 		`画像確認はまず compare.png（design | actual | diff の縮小横並び）、詰めの確認のみ原寸 3 枚を読む（原寸画像上の座標はクラスタ座標の ${deviceScaleFactor} 倍）`,
 	);
 }
-console.log(`出力先: ${outDir}`);
+console.log(`出力先: ${join(projectDir, ".design-diff", label)}`);
 
 process.exit(pass ? 0 : 1);
