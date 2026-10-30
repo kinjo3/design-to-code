@@ -9,7 +9,14 @@ import { pathToFileURL } from "node:url";
 const MAX_ADJUSTMENTS = 3;
 
 export function targetLabel({ selector, width, designWidth, out }) {
-	if (out) return out;
+	if (out) {
+		// ラベルは .design-diff の下のディレクトリ名になるので、区切り文字や .. で .design-diff の外を指させない。
+		// design-target register でも同じ規則で弾かないと、design-diff が書き出せない名前を登録でき、Stop hook が計測記録を見つけられない
+		if (!/^[A-Za-z0-9_-]+$/.test(out)) {
+			throw new Error(`--out には英数字・-・_ だけの名前を指定してください（渡された値: "${out}"）`);
+		}
+		return out;
+	}
 	// 同じセレクタ・同じビューポートで書き出し幅だけ変えた実行が上書きし合わないよう、指定時は幅を重ねる
 	const designWidthLabel = designWidth === undefined ? "" : `-${Number(designWidth)}`;
 	return `${selector.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "")}-${Number(width)}${designWidthLabel}`;
@@ -102,7 +109,12 @@ function register(argv) {
 	const projectDir = process.cwd();
 	const path = sessionPath(projectDir, values.session);
 	const session = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : { targets: [] };
-	const label = targetLabel({ selector: values.selector, width: values.width, designWidth: values["design-width"], out: values.out });
+	let label;
+	try {
+		label = targetLabel({ selector: values.selector, width: values.width, designWidth: values["design-width"], out: values.out });
+	} catch (error) {
+		fail(error.message);
+	}
 	// 登録し直して登録時刻を進めると、それまでの試行が数えられなくなるので、最初の登録を残す
 	if (!session.targets.some((target) => target.label === label)) {
 		session.targets.push({ label, selector: values.selector, width: Number(values.width), registeredAt: new Date().toISOString() });

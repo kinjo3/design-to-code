@@ -1,6 +1,5 @@
 import { parseArgs } from "node:util";
-import { spawnSync } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import pixelmatch from "pixelmatch";
@@ -34,6 +33,12 @@ function fail(message) {
 	process.exit(1);
 }
 
+// README の導入手順はサンドボックスの除外ルールに design-diff を入れるので、受け取った文字列をコマンドとして実行すると、
+// 任意のコマンドがサンドボックスの外で動く。黙って無視すると、ビルドしていない描画を測って調整が効かなかったと誤って判断する
+if (values.build !== undefined) {
+	fail("--build は廃止しました。ビルドが必要なプロジェクトでは、design-diff の前にビルドコマンドを単独で実行してください。");
+}
+
 const required = ["url", "selector", "design", "width"];
 const missing = required.filter((key) => !values[key]);
 if (missing.length > 0) {
@@ -56,6 +61,22 @@ for (const [name, min] of [
 }
 
 const url = values.url;
+// サンドボックスの外で開けるのを開発サーバーに限り、file: や外部の URL から読み込んだ内容を撮影させない。
+// 先頭一致で判定すると、http://localhost@example.com のようにユーザー情報の位置に localhost を書いた URL を通してしまう
+const LOCAL_HOSTNAMES = ["localhost", "127.0.0.1", "[::1]"];
+function isLocalDevServerUrl(value) {
+	let parsed;
+	try {
+		parsed = new URL(value);
+	} catch {
+		return false;
+	}
+	if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+	return LOCAL_HOSTNAMES.includes(parsed.hostname) || parsed.hostname.endsWith(".localhost");
+}
+if (!isLocalDevServerUrl(url)) {
+	fail(`--url には、ホスト名が localhost・127.0.0.1・[::1]・*.localhost の http: か https: の URL を指定してください（渡された値: "${url}"）`);
+}
 const selector = values.selector;
 const designPath = values.design;
 const width = Number(values.width);
@@ -90,10 +111,32 @@ if (values.texts) {
 	}
 }
 
-const label = targetLabel({ selector, width, designWidth: values["design-width"], out: values.out });
+let label;
+try {
+	label = targetLabel({ selector, width, designWidth: values["design-width"], out: values.out });
+} catch (error) {
+	fail(error.message);
+}
 
 // スクリプトの置き場所に依存しないよう、出力先は実行時のカレントディレクトリ（プロジェクトルート）を基準にする
-const outDir = join(process.cwd(), ".design-diff", label);
+const resultsDir = join(process.cwd(), ".design-diff");
+const outDir = join(resultsDir, label);
+
+// design-diff はサンドボックスの外で動くので、サンドボックスの中から作ったシンボリックリンクをたどって書き出すと、
+// サンドボックスが書き込みを禁じている場所に書けてしまう
+function failIfSymlink(paths) {
+	for (const path of paths) {
+		let stats;
+		try {
+			stats = lstatSync(path);
+		} catch (error) {
+			if (error.code === "ENOENT") continue;
+			throw error;
+		}
+		if (stats.isSymbolicLink()) fail(`出力先がシンボリックリンクなので、何も書き出さずに終えました: ${path}`);
+	}
+}
+failIfSymlink([resultsDir, outDir]);
 mkdirSync(outDir, { recursive: true });
 
 let designPng;
@@ -104,21 +147,6 @@ try {
 }
 const deviceScaleFactor = designPng.width / designWidth;
 
-// ビルドと撮影を別のコマンドにすると、AI がビルドし忘れたまま変更前の描画を測り、調整が効かなかったと誤って判断する。
-// 撮影の直前に同じ実行の中でビルドし、失敗したら測らない
-const BUILD_OUTPUT_TAIL_LINES = 20; // ビルドのログ全文を読ませると、原因の行が埋もれるうえにトークンを使う
-// spawnSync は既定で 1MB を超える出力を受け取るとビルドを止めるので、ログの多いビルドでも最後まで走らせる
-const BUILD_MAX_BUFFER = 64 * 1024 * 1024;
-if (values.build) {
-	const build = spawnSync(values.build, { shell: true, encoding: "utf8", maxBuffer: BUILD_MAX_BUFFER });
-	if (build.status !== 0) {
-		const output = `${build.stdout ?? ""}${build.stderr ?? ""}${build.error ? `\n${build.error.message}` : ""}`.trimEnd();
-		const tail = output.split("\n").slice(-BUILD_OUTPUT_TAIL_LINES).join("\n");
-		fail(`ビルドに失敗したので差分を測りませんでした: ${values.build}（終了コード ${build.status ?? build.signal}）\n${tail}`);
-	}
-	console.log(`ビルド済み: ${values.build}`);
-}
-// ビルド生成物を git で追跡しているプロジェクトでは、ビルドで作業ツリーが変わるので、ビルドのあとに求める
 const treeHash = workingTreeHash(process.cwd());
 
 // 原因の見当がつく撮影の失敗は案内文だけを出し、それ以外の例外はスタックトレースごと表に出す
@@ -462,6 +490,10 @@ const diffPane = downscale(diffPng, compareScale);
 if (compareScale < 1) markDiffRed(diffPng, diffPane, compareScale);
 const comparePng = compositeRow([downscale(designCanvas, compareScale), downscale(actualCanvas, compareScale), diffPane]);
 
+const outputFiles = ["design.png", "actual.png", "diff.png", "compare.png", "summary.json", "layout.json", "edges.json"];
+// 撮影の間にサンドボックスの中からリンクに差し替えられても、書き出す直前に気付けるよう確かめ直す
+failIfSymlink([resultsDir, outDir, ...outputFiles.map((file) => join(outDir, file)), runLogPath(process.cwd(), label)]);
+
 writeFileSync(join(outDir, "design.png"), PNG.sync.write(designCanvas));
 writeFileSync(join(outDir, "actual.png"), PNG.sync.write(actualCanvas));
 writeFileSync(join(outDir, "diff.png"), PNG.sync.write(diffPng));
@@ -495,7 +527,7 @@ const summary = {
 	targetRectCssPx: targetRect,
 	deviceScaleFactor,
 	diffRatioThreshold,
-	args: { url, selector, designPath, width, designWidth, height, wait, exclude: excludeSelectors, build: values.build },
+	args: { url, selector, designPath, width, designWidth, height, wait, exclude: excludeSelectors },
 	timestamp: new Date().toISOString(),
 };
 writeFileSync(join(outDir, "summary.json"), JSON.stringify(summary, null, 2));
