@@ -1,6 +1,9 @@
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createServer, request } from "node:http";
 import { isAllowedHost, isValidAllowDomain, startBlockingProxy } from "../plugin/scripts/design-network.mjs";
 
@@ -117,6 +120,40 @@ describe("承認の hook", () => {
 	test("入力を読めないときは承認画面に回す", () => {
 		const output = execFileSync("node", [hook], { input: "{", encoding: "utf8" });
 		assert.equal(JSON.parse(output).hookSpecificOutput.permissionDecision, "ask");
+	});
+	describe("承認した宛先をセッションの間だけ覚える", () => {
+		const dataDir = mkdtempSync(join(tmpdir(), "design-approval-"));
+		after(() => rmSync(dataDir, { recursive: true, force: true }));
+		function runHook(input) {
+			const output = execFileSync("node", [hook], {
+				input: JSON.stringify(input),
+				encoding: "utf8",
+				env: { ...process.env, CLAUDE_PLUGIN_DATA: dataDir },
+			});
+			return output === "" ? null : JSON.parse(output).hookSpecificOutput;
+		}
+		const run = (session, command) => ({ session_id: session, tool_name: "Bash", tool_input: { command } });
+		const fonts = "design-diff --url http://localhost:3000 --allow-domain fonts.googleapis.com --allow-domain fonts.gstatic.com";
+
+		test("実行まで進む前は、同じ宛先でも尋ね続ける", () => {
+			assert.equal(runHook({ ...run("s1", fonts), hook_event_name: "PreToolUse" })?.permissionDecision, "ask");
+			assert.equal(runHook({ ...run("s1", fonts), hook_event_name: "PreToolUse" })?.permissionDecision, "ask");
+		});
+		test("差分が閾値を超えて失敗した実行のあとも、同じ宛先なら尋ねない", () => {
+			runHook({ ...run("s1", fonts), hook_event_name: "PostToolUseFailure" });
+			assert.equal(runHook({ ...run("s1", fonts), hook_event_name: "PreToolUse" }), null);
+		});
+		test("承認していない宛先が 1 つでもあれば尋ねる", () => {
+			const more = `${fonts} --allow-domain use.typekit.net`;
+			assert.equal(runHook({ ...run("s1", more), hook_event_name: "PreToolUse" })?.permissionDecision, "ask");
+		});
+		test("別のセッションでは尋ねる", () => {
+			assert.equal(runHook({ ...run("s2", fonts), hook_event_name: "PreToolUse" })?.permissionDecision, "ask");
+		});
+		test("セッション ID がパスの区切りを含むと覚えない", () => {
+			runHook({ ...run("../x", fonts), hook_event_name: "PostToolUse" });
+			assert.equal(runHook({ ...run("../x", fonts), hook_event_name: "PreToolUse" })?.permissionDecision, "ask");
+		});
 	});
 	test("引用符やエスケープを解いた宛先を並べる", () => {
 		const reason = decide(
