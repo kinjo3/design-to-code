@@ -1,6 +1,6 @@
 import { after, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -12,6 +12,7 @@ import {
 
 const base = mkdtempSync(join(tmpdir(), "design-results-"));
 after(() => rmSync(base, { recursive: true, force: true }));
+const caseInsensitive = existsSync(base.toUpperCase());
 
 let project;
 let outside;
@@ -58,6 +59,23 @@ describe("通常の読み書き", () => {
 		symlinkSync(outside, join(project, ".design-diff", "b"));
 		assert.throws(() => writeResultsFiles(project, ["b"], { "x.json": "1" }), UnsafeResultsPathError);
 		assert.equal(process.cwd(), before);
+	});
+
+	test("プロジェクトのディレクトリが無ければ null を返す", () => {
+		assert.equal(readResultsFile(join(project, "gone"), ["sessions"], "s1.json"), null);
+	});
+});
+
+describe("大文字と小文字を区別しないファイルシステム", { skip: !caseInsensitive && "大文字と小文字を区別するファイルシステム" }, () => {
+	test("大文字・小文字だけが違うパスで渡されたプロジェクトにも読み書きできる", () => {
+		writeResultsFiles(project.toUpperCase(), ["a-375"], { "x.json": "1" });
+		assert.equal(readResultsFile(project, ["a-375"], "x.json"), "1");
+	});
+
+	test("大文字・小文字だけが違うラベルは、リンクとは別の理由で断る", () => {
+		writeResultsFiles(project, ["cv-375"], { "x.json": "1" });
+		assert.throws(() => writeResultsFiles(project, ["CV-375"], { "x.json": "2" }), /大文字・小文字だけが違う/);
+		assert.equal(readResultsFile(project, ["cv-375"], "x.json"), "1");
 	});
 });
 

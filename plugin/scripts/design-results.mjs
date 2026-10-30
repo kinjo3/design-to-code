@@ -1,4 +1,4 @@
-import { closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
@@ -15,8 +15,15 @@ function enterResultsDir(projectDir, segments, { create }) {
 	// 登録のファイルに書かれたラベルもここに来るので、.. で .design-diff の外へ出させない
 	const invalid = segments.find((segment) => !/^[A-Za-z0-9_-]+$/.test(segment));
 	if (invalid !== undefined) throw new UnsafeResultsPathError(`.design-diff の下のディレクトリ名に使えない名前です: "${invalid}"`);
-	let expected = realpathSync(projectDir);
-	process.chdir(expected);
+	try {
+		process.chdir(projectDir);
+	} catch (error) {
+		// Stop hook に渡るセッションの cwd は、消した worktree のように既に無いことがある。Stop hook が次の候補のディレクトリを探せるよう、記録が無いものとして扱う
+		if (!create && error.code === "ENOENT") return false;
+		throw error;
+	}
+	// realpath は大文字と小文字の違いを実際の名前に直さないので、実際に入ったディレクトリの名前を比較の基準にする
+	let expected = process.cwd();
 	for (const segment of [".design-diff", ...segments]) {
 		expected = join(expected, segment);
 		if (create) {
@@ -34,6 +41,10 @@ function enterResultsDir(projectDir, segments, { create }) {
 			throw error;
 		}
 		if (process.cwd() !== expected) {
+			// 大文字と小文字を区別しないファイルシステムでは、セレクタ #cv と #CV から作ったラベルが同じディレクトリを指し、計測の結果が混ざる
+			if (process.cwd().toLowerCase() === expected.toLowerCase()) {
+				throw new UnsafeResultsPathError(`${expected} と大文字・小文字だけが違う ${process.cwd()} が既にあります。--out で別の名前を指定してください`);
+			}
 			throw new UnsafeResultsPathError(`${expected} がリンクで別の場所（${process.cwd()}）を指しています`);
 		}
 	}
