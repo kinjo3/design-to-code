@@ -23,9 +23,15 @@
 | `actual.png` | 実装の描画結果 |
 | `diff.png` | 差分のある画素。比較から外した範囲は青で塗られる |
 | `compare.png` | `design.png` `actual.png` `diff.png` を縮小して横に並べた画像。比較から外した範囲は青で塗られる |
-| `summary.json` | 合否・`diffRatio`・差分のある画素の固まりの位置・比較から外した範囲（`excludedCssPx`） |
+| `summary.json` | 合否・`diffRatio`・差分のある画素の固まりの位置・比較から外した範囲（`excludedCssPx`）・通信を止めた外部の宛先（`blockedHosts`） |
 | `layout.json` | ノードごとの箱のずれ。Figma の URL から実装した場合だけ出る |
 | `edges.json` | 実装側の要素の辺ごとのずれと判定不能の辺。デザイン画像から実装した場合だけ出る |
+
+## 撮影中の通信
+
+撮影中の Chrome は、開発サーバー（ホスト名が `localhost`・`127.0.0.1`・`[::1]`・`*.localhost`）と、`--allow-domain` で渡したホストにだけ通信する。それ以外への通信は止め、止めた宛先のホストを資源の種類（`font`・`image`・`script` など）と件数とともに出力する。最初に開いたページが外部の宛先へ移ろうとしたときは、撮影せずにエラーで終える。
+
+`--allow-domain` を付けた `design-diff` の実行は、プラグインの PreToolUse hook が、auto mode でもユーザーの承認画面に回し、渡した宛先を並べて許可するかを尋ねる。承認画面に並ぶ宛先と実際に渡る引数が食い違わないよう、変数やコマンドの置き換え・`&&` などのつなぎ・ファイル名の展開・環境変数の前置きを含む `design-diff` のコマンドは、hook が拒否する。
 
 ## 差分チェックの完走
 
