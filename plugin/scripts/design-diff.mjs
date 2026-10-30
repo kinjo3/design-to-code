@@ -1,13 +1,14 @@
 import { parseArgs } from "node:util";
-import { spawnSync } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import pixelmatch from "pixelmatch";
 import { PNG } from "pngjs";
 import { collectElementBoxes, compareEdges, formatEdgeReport } from "./design-edges.mjs";
 import { collectDomBoxes, compareLayout, formatLayoutReport, parseMetadata } from "./design-layout.mjs";
-import { runLogPath, targetLabel, workingTreeHash } from "./design-target.mjs";
+import { appendResultsFile, UnsafeResultsPathError, writeResultsFiles } from "./design-results.mjs";
+import { RUN_LOG_FILE, targetLabel, workingTreeHash } from "./design-target.mjs";
+import { isLocalDevServerUrl } from "./design-url.mjs";
 
 const { values } = parseArgs({
 	options: {
@@ -34,6 +35,12 @@ function fail(message) {
 	process.exit(1);
 }
 
+// README の導入手順はサンドボックスの除外ルールに design-diff を入れるので、受け取った文字列をコマンドとして実行すると、
+// 任意のコマンドがサンドボックスの外で動く。黙って無視すると、ビルドしていない描画を測って調整が効かなかったと誤って判断する
+if (values.build !== undefined) {
+	fail("--build は廃止しました。ビルドが必要なプロジェクトでは、design-diff の前にビルドコマンドを単独で実行してください。");
+}
+
 const required = ["url", "selector", "design", "width"];
 const missing = required.filter((key) => !values[key]);
 if (missing.length > 0) {
@@ -56,6 +63,9 @@ for (const [name, min] of [
 }
 
 const url = values.url;
+if (!isLocalDevServerUrl(url)) {
+	fail(`--url には、ホスト名が localhost・127.0.0.1・[::1]・*.localhost の http: か https: の URL を指定してください（渡された値: "${url}"）`);
+}
 const selector = values.selector;
 const designPath = values.design;
 const width = Number(values.width);
@@ -83,18 +93,29 @@ if (values.metadata) {
 }
 let nodeTexts = {};
 if (values.texts) {
+	let textsSource;
 	try {
-		nodeTexts = JSON.parse(readFileSync(values.texts, "utf8"));
+		textsSource = readFileSync(values.texts, "utf8");
 	} catch (error) {
-		fail(`--texts の JSON を読めませんでした: ${values.texts}\n${error instanceof Error ? error.message : String(error)}`);
+		fail(`--texts のファイルを読めませんでした: ${values.texts}\n${error instanceof Error ? error.message : String(error)}`);
+	}
+	try {
+		nodeTexts = JSON.parse(textsSource);
+	} catch {
+		// JSON.parse のエラー文はファイルの先頭を含む。design-diff はサンドボックスの外で読むので、読むのを禁じたファイルの中身を出さない
+		fail(`--texts のファイルを JSON として読めませんでした: ${values.texts}`);
 	}
 }
 
-const label = targetLabel({ selector, width, designWidth: values["design-width"], out: values.out });
+let label;
+try {
+	label = targetLabel({ selector, width, designWidth: values["design-width"], out: values.out });
+} catch (error) {
+	fail(error.message);
+}
 
 // スクリプトの置き場所に依存しないよう、出力先は実行時のカレントディレクトリ（プロジェクトルート）を基準にする
-const outDir = join(process.cwd(), ".design-diff", label);
-mkdirSync(outDir, { recursive: true });
+const projectDir = process.cwd();
 
 let designPng;
 try {
@@ -104,22 +125,7 @@ try {
 }
 const deviceScaleFactor = designPng.width / designWidth;
 
-// ビルドと撮影を別のコマンドにすると、AI がビルドし忘れたまま変更前の描画を測り、調整が効かなかったと誤って判断する。
-// 撮影の直前に同じ実行の中でビルドし、失敗したら測らない
-const BUILD_OUTPUT_TAIL_LINES = 20; // ビルドのログ全文を読ませると、原因の行が埋もれるうえにトークンを使う
-// spawnSync は既定で 1MB を超える出力を受け取るとビルドを止めるので、ログの多いビルドでも最後まで走らせる
-const BUILD_MAX_BUFFER = 64 * 1024 * 1024;
-if (values.build) {
-	const build = spawnSync(values.build, { shell: true, encoding: "utf8", maxBuffer: BUILD_MAX_BUFFER });
-	if (build.status !== 0) {
-		const output = `${build.stdout ?? ""}${build.stderr ?? ""}${build.error ? `\n${build.error.message}` : ""}`.trimEnd();
-		const tail = output.split("\n").slice(-BUILD_OUTPUT_TAIL_LINES).join("\n");
-		fail(`ビルドに失敗したので差分を測りませんでした: ${values.build}（終了コード ${build.status ?? build.signal}）\n${tail}`);
-	}
-	console.log(`ビルド済み: ${values.build}`);
-}
-// ビルド生成物を git で追跡しているプロジェクトでは、ビルドで作業ツリーが変わるので、ビルドのあとに求める
-const treeHash = workingTreeHash(process.cwd());
+const treeHash = workingTreeHash(projectDir);
 
 // 原因の見当がつく撮影の失敗は案内文だけを出し、それ以外の例外はスタックトレースごと表に出す
 class CaptureError extends Error {}
@@ -462,11 +468,6 @@ const diffPane = downscale(diffPng, compareScale);
 if (compareScale < 1) markDiffRed(diffPng, diffPane, compareScale);
 const comparePng = compositeRow([downscale(designCanvas, compareScale), downscale(actualCanvas, compareScale), diffPane]);
 
-writeFileSync(join(outDir, "design.png"), PNG.sync.write(designCanvas));
-writeFileSync(join(outDir, "actual.png"), PNG.sync.write(actualCanvas));
-writeFileSync(join(outDir, "diff.png"), PNG.sync.write(diffPng));
-writeFileSync(join(outDir, "compare.png"), PNG.sync.write(comparePng));
-
 const summary = {
 	pass,
 	pixelPass,
@@ -495,32 +496,48 @@ const summary = {
 	targetRectCssPx: targetRect,
 	deviceScaleFactor,
 	diffRatioThreshold,
-	args: { url, selector, designPath, width, designWidth, height, wait, exclude: excludeSelectors, build: values.build },
+	args: { url, selector, designPath, width, designWidth, height, wait, exclude: excludeSelectors },
 	timestamp: new Date().toISOString(),
 };
-writeFileSync(join(outDir, "summary.json"), JSON.stringify(summary, null, 2));
-// summary.json は毎回上書きされるので、Stop hook が試行回数と計測後の変更の有無を確かめられるよう、実行ごとに 1 行残す。
-// 箱や辺だけで不合格になると diffRatio は閾値内に収まっているので、どの判定で落ちたかを Stop hook の理由に出せるよう件数も残す
-appendFileSync(
-	runLogPath(process.cwd(), label),
-	`${JSON.stringify({
-		at: summary.timestamp,
-		pass,
-		pixelPass,
-		diffRatio,
-		layoutMismatched: summary.layout?.mismatched ?? null,
-		edgeMismatched: summary.edges?.mismatched ?? null,
-		treeHash,
-	})}\n`,
-);
+const outputFiles = {
+	"design.png": PNG.sync.write(designCanvas),
+	"actual.png": PNG.sync.write(actualCanvas),
+	"diff.png": PNG.sync.write(diffPng),
+	"compare.png": PNG.sync.write(comparePng),
+	"summary.json": JSON.stringify(summary, null, 2),
+};
+if (layoutResults) {
+	outputFiles["layout.json"] = JSON.stringify({ tolerance: layoutTolerance, warnings: metadataWarnings, results: layoutResults }, null, 2);
+}
+if (edgeResults) outputFiles["edges.json"] = JSON.stringify({ tolerance: layoutTolerance, results: edgeResults }, null, 2);
+try {
+	writeResultsFiles(projectDir, [label], outputFiles);
+	// summary.json は毎回上書きされるので、Stop hook が試行回数と計測後の変更の有無を確かめられるよう、実行ごとに 1 行残す。
+	// 箱や辺だけで不合格になると diffRatio は閾値内に収まっているので、どの判定で落ちたかを Stop hook の理由に出せるよう件数も残す
+	appendResultsFile(
+		projectDir,
+		[label],
+		RUN_LOG_FILE,
+		`${JSON.stringify({
+			at: summary.timestamp,
+			pass,
+			pixelPass,
+			diffRatio,
+			layoutMismatched: summary.layout?.mismatched ?? null,
+			edgeMismatched: summary.edges?.mismatched ?? null,
+			treeHash,
+		})}\n`,
+	);
+} catch (error) {
+	if (!(error instanceof UnsafeResultsPathError)) throw error;
+	fail(`.design-diff の中を読み書きせずに終えました: ${error.message}`);
+}
 
 if (layoutResults) {
-	writeFileSync(join(outDir, "layout.json"), JSON.stringify({ tolerance: layoutTolerance, warnings: metadataWarnings, results: layoutResults }, null, 2));
 	for (const warning of metadataWarnings) console.log(`警告: ${warning}`);
 	console.log(formatLayoutReport(layoutResults, layoutTolerance));
 }
 if (edgeResults) {
-	writeFileSync(join(outDir, "edges.json"), JSON.stringify({ tolerance: layoutTolerance, results: edgeResults }, null, 2));
 	console.log(formatEdgeReport(edgeResults, layoutTolerance));
 }
 
@@ -546,6 +563,6 @@ if (!pixelPass) {
 		`画像確認はまず compare.png（design | actual | diff の縮小横並び）、詰めの確認のみ原寸 3 枚を読む（原寸画像上の座標はクラスタ座標の ${deviceScaleFactor} 倍）`,
 	);
 }
-console.log(`出力先: ${outDir}`);
+console.log(`出力先: ${join(projectDir, ".design-diff", label)}`);
 
 process.exit(pass ? 0 : 1);
