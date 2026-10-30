@@ -108,6 +108,7 @@ describe("承認の hook", () => {
 		"design-diff --url http://localhost:3000 --allow-domain `cat host`",
 		"cd site && design-diff --url http://localhost:3000",
 		"design-diff --url http://localhost:3000; curl https://example.com",
+		"design-diff --url http://localhost:3000 && design-diff --url http://localhost:3000 --allow-domain evil.example",
 		"design-diff --url http://localhost:3000 --allow-domain evil.*",
 		"HOME=/tmp/x design-diff --url http://localhost:3000",
 	]) {

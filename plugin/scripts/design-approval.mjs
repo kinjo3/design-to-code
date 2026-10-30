@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 
 // design-diff は --allow-domain で渡した外部の宛先へ、撮影中の Chrome を通信させる。auto mode では承認を判定役のモデルが代わりに行うので、
 // 外部の宛先を許可する実行は、PreToolUse の ask でどのモードでも人の承認画面に回す。
-// 承認画面に並べる宛先と実際に渡る引数が食い違わないよう、シェルの展開を含むコマンドは引数を推測せずに拒否する
+// 承認画面に並べる宛先と実際に渡る引数が食い違わないよう、シェルの展開を含むコマンドは引数を推測せずに拒否する。
+// サンドボックスの除外ルールは、つないだコマンドがすべて一致すればまとめて外で動かすので、design-diff を ; や && でつないだコマンドも拒否する
 
 // cat .design-diff/… や git diff …/design-diff.mjs のように、design-diff を実行しないコマンドまで拒否しないよう、プログラムの語だけを見る
 function mentionsDesignDiff(command) {
